@@ -2,10 +2,8 @@ const Consumer = require("../models/Consumer");
 const MonthlyBill = require("../models/MonthlyBill");
 const VisitLog = require("../models/VisitLog");
 const { getCurrentMonth } = require("../utils/dateHelpers");
+const { logActivity } = require("../utils/logActivity");
 
-// @route  POST /api/consumers
-// @desc   Manually add ek consumer (jo Expiry file me aaya lekin master list me nahi tha)
-// @access Private (admin only)
 const createConsumer = async (req, res) => {
   try {
     const {
@@ -51,6 +49,12 @@ const createConsumer = async (req, res) => {
       franchisee,
     });
 
+    await logActivity(
+      req.user,
+      "consumer_add",
+      `Naya consumer manually add kiya: ${consumer.name} (${consumer.consumerId})`,
+    );
+
     return res.status(201).json(consumer);
   } catch (error) {
     console.error("createConsumer error:", error);
@@ -60,7 +64,6 @@ const createConsumer = async (req, res) => {
   }
 };
 
-// @route  GET /api/consumers/unmatched-areas
 const getUnmatchedAreaGroups = async (req, res) => {
   try {
     const groups = await Consumer.aggregate([
@@ -90,7 +93,6 @@ const getUnmatchedAreaGroups = async (req, res) => {
   }
 };
 
-// @route  PUT /api/consumers/assign-area-by-address
 const assignAreaByAddress = async (req, res) => {
   try {
     const { address, areaId } = req.body;
@@ -116,16 +118,10 @@ const assignAreaByAddress = async (req, res) => {
   }
 };
 
-// @route  GET /api/consumers/search?areaId=&q=
-// @desc   Ek area ke andar naam/ID/VC No./mobile se consumer dhoondta hai, current
-//         month ka payment status bhi saath me deta hai
-// @access Private
 const searchConsumers = async (req, res) => {
   try {
     const { areaId, q } = req.query;
-    if (!areaId) {
-      return res.status(400).json({ message: "areaId zaroori hai" });
-    }
+    if (!areaId) return res.status(400).json({ message: "areaId zaroori hai" });
 
     const filter = { areaId };
     if (q && q.trim()) {
@@ -161,8 +157,6 @@ const searchConsumers = async (req, res) => {
   }
 };
 
-// @route  GET /api/consumers/:id
-// @access Private
 const getConsumerDetail = async (req, res) => {
   try {
     const consumer = await Consumer.findById(req.params.id).populate(
@@ -187,50 +181,57 @@ const getConsumerDetail = async (req, res) => {
   }
 };
 
-// @route  PUT /api/consumers/:id/collect
-// @desc   Is mahine ka payment "Paid" mark karta hai
-// @access Private
 const collectPayment = async (req, res) => {
   try {
-    const { amount } = req.body;
+    const { amountPaid } = req.body;
     const consumer = await Consumer.findById(req.params.id);
     if (!consumer)
       return res.status(404).json({ message: "Consumer nahi mila" });
 
     const month = getCurrentMonth();
     let bill = await MonthlyBill.findOne({ consumerId: consumer._id, month });
-    const finalAmount =
-      amount !== undefined && amount !== null && amount !== ""
-        ? Number(amount)
-        : (bill?.amount ?? consumer.monthlyAmount ?? 0);
-
     if (!bill) {
       bill = await MonthlyBill.create({
         consumerId: consumer._id,
         month,
-        amount: finalAmount,
-        status: "paid",
-        paidDate: new Date(),
-        lastEditedBy: req.user._id,
-        lastEditedAt: new Date(),
+        amount: consumer.monthlyAmount || 0,
+        amountPaid: 0,
+        status: "unpaid",
       });
-    } else {
-      bill.amount = finalAmount;
+    }
+
+    const paidNow = Number(amountPaid) || 0;
+    bill.amountPaid = (bill.amountPaid || 0) + paidNow;
+    bill.lastEditedBy = req.user._id;
+    bill.lastEditedAt = new Date();
+
+    if (bill.amount > 0 && bill.amountPaid >= bill.amount) {
       bill.status = "paid";
       bill.paidDate = new Date();
       bill.dueRemark = "";
-      bill.lastEditedBy = req.user._id;
-      bill.lastEditedAt = new Date();
-      await bill.save();
+      bill.followUpDate = null;
+    } else {
+      bill.status = "due";
+      const balance = bill.amount - bill.amountPaid;
+      bill.dueRemark = `Partial payment — ₹${balance} baaki hai`;
     }
+
+    await bill.save();
 
     await VisitLog.create({
       consumerId: consumer._id,
       visitedBy: req.user._id,
       purpose: "collection",
-      outcome: "paid",
-      amountCollected: finalAmount,
+      outcome: bill.status === "paid" ? "paid" : "promised_later",
+      amountCollected: paidNow,
+      customerRemark: bill.status !== "paid" ? bill.dueRemark : "",
     });
+
+    await logActivity(
+      req.user,
+      "collect_payment",
+      `${consumer.name} (${consumer.consumerId}) se ₹${paidNow} liya`,
+    );
 
     return res.json(bill);
   } catch (error) {
@@ -241,9 +242,53 @@ const collectPayment = async (req, res) => {
   }
 };
 
-// @route  PUT /api/consumers/:id/unpaid
-// @desc   Galti se Paid mark hua tha use wapas Unpaid karta hai
-// @access Private
+const editBillAmount = async (req, res) => {
+  try {
+    const { amount } = req.body;
+    if (amount === undefined || amount === null || amount === "") {
+      return res.status(400).json({ message: "Amount zaroori hai" });
+    }
+    const consumer = await Consumer.findById(req.params.id);
+    if (!consumer)
+      return res.status(404).json({ message: "Consumer nahi mila" });
+
+    const month = getCurrentMonth();
+    let bill = await MonthlyBill.findOne({ consumerId: consumer._id, month });
+    if (!bill) {
+      bill = await MonthlyBill.create({
+        consumerId: consumer._id,
+        month,
+        amount: Number(amount),
+        status: "unpaid",
+      });
+    } else {
+      bill.amount = Number(amount);
+      if (bill.amount > 0 && bill.amountPaid >= bill.amount) {
+        bill.status = "paid";
+      } else if (bill.amountPaid > 0) {
+        bill.status = "due";
+        bill.dueRemark = `Partial payment — ₹${bill.amount - bill.amountPaid} baaki hai`;
+      }
+      bill.lastEditedBy = req.user._id;
+      bill.lastEditedAt = new Date();
+      await bill.save();
+    }
+
+    await logActivity(
+      req.user,
+      "edit_amount",
+      `${consumer.name} (${consumer.consumerId}) ka amount ₹${amount} kiya`,
+    );
+
+    return res.json(bill);
+  } catch (error) {
+    console.error("editBillAmount error:", error);
+    return res
+      .status(500)
+      .json({ message: "Server error", error: error.message });
+  }
+};
+
 const markUnpaid = async (req, res) => {
   try {
     const consumer = await Consumer.findById(req.params.id);
@@ -262,6 +307,9 @@ const markUnpaid = async (req, res) => {
     } else {
       bill.status = "unpaid";
       bill.paidDate = null;
+      bill.amountPaid = 0;
+      bill.dueRemark = "";
+      bill.followUpDate = null;
       bill.lastEditedBy = req.user._id;
       bill.lastEditedAt = new Date();
       await bill.save();
@@ -275,6 +323,12 @@ const markUnpaid = async (req, res) => {
       customerRemark: "Galti se Paid mark hua tha, Unpaid me correct kiya gaya",
     });
 
+    await logActivity(
+      req.user,
+      "mark_unpaid",
+      `${consumer.name} (${consumer.consumerId}) ko Unpaid kiya`,
+    );
+
     return res.json(bill);
   } catch (error) {
     console.error("markUnpaid error:", error);
@@ -284,12 +338,9 @@ const markUnpaid = async (req, res) => {
   }
 };
 
-// @route  PUT /api/consumers/:id/due
-// @desc   Is mahine "Due" mark karta hai, remark ke saath
-// @access Private
 const markDue = async (req, res) => {
   try {
-    const { remark } = req.body;
+    const { remark, followUpDate } = req.body;
     const consumer = await Consumer.findById(req.params.id);
     if (!consumer)
       return res.status(404).json({ message: "Consumer nahi mila" });
@@ -303,12 +354,14 @@ const markDue = async (req, res) => {
         amount: consumer.monthlyAmount,
         status: "due",
         dueRemark: remark || "",
+        followUpDate: followUpDate || null,
         lastEditedBy: req.user._id,
         lastEditedAt: new Date(),
       });
     } else {
       bill.status = "due";
       bill.dueRemark = remark || "";
+      bill.followUpDate = followUpDate || null;
       bill.paidDate = null;
       bill.lastEditedBy = req.user._id;
       bill.lastEditedAt = new Date();
@@ -323,6 +376,12 @@ const markDue = async (req, res) => {
       customerRemark: remark || "",
     });
 
+    await logActivity(
+      req.user,
+      "mark_due",
+      `${consumer.name} (${consumer.consumerId}) ko Due kiya — ${remark || ""}`,
+    );
+
     return res.json(bill);
   } catch (error) {
     console.error("markDue error:", error);
@@ -332,9 +391,6 @@ const markDue = async (req, res) => {
   }
 };
 
-// @route  POST /api/consumers/:id/visit
-// @desc   Service Entry — bina payment ke bhi ek visit log karta hai (kisliye gaye the)
-// @access Private
 const logVisit = async (req, res) => {
   try {
     const { purpose, serviceNote, outcome, amountCollected, customerRemark } =
@@ -353,6 +409,12 @@ const logVisit = async (req, res) => {
       customerRemark: customerRemark || "",
     });
 
+    await logActivity(
+      req.user,
+      "visit_entry",
+      `${consumer.name} (${consumer.consumerId}) — ${purpose}: ${serviceNote || ""}`,
+    );
+
     return res.status(201).json(visit);
   } catch (error) {
     console.error("logVisit error:", error);
@@ -362,9 +424,6 @@ const logVisit = async (req, res) => {
   }
 };
 
-// @route  GET /api/consumers/:id/history
-// @desc   Poora ledger — har month ka bill + har visit, dono newest-first
-// @access Private
 const getHistory = async (req, res) => {
   try {
     const consumerId = req.params.id;
@@ -388,6 +447,7 @@ module.exports = {
   searchConsumers,
   getConsumerDetail,
   collectPayment,
+  editBillAmount,
   markUnpaid,
   markDue,
   logVisit,

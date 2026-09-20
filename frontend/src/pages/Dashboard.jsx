@@ -1,29 +1,30 @@
-import { useState, useContext, useEffect } from "react";
-import { useNavigate, useParams } from "react-router-dom";
-import { AuthContext } from "../context/AuthContext";
+import { useState, useEffect } from "react";
+import { useNavigate, useParams, Link } from "react-router-dom";
 import api from "../api/axios";
 
-const statusBadge = (bill) => {
-  if (!bill) return { label: "Not Set", color: "bg-gray-100 text-gray-500" };
-  if (bill.status === "paid")
-    return { label: "Paid", color: "bg-green-100 text-green-700" };
-  if (bill.status === "due")
-    return { label: "Due", color: "bg-yellow-100 text-yellow-700" };
-  if (bill.status === "not_packaged")
-    return { label: "Not Packaged", color: "bg-gray-200 text-gray-600" };
-  if (bill.status === "box_issue")
-    return { label: "Box Issue", color: "bg-orange-100 text-orange-700" };
-  return { label: "Unpaid", color: "bg-red-100 text-red-700" };
+const todayStr = () => new Date().toISOString().slice(0, 10);
+const isSameMonth = (d) => {
+  if (!d) return true;
+  const now = new Date();
+  const fd = new Date(d);
+  return (
+    fd.getFullYear() === now.getFullYear() && fd.getMonth() === now.getMonth()
+  );
 };
 
 const Dashboard = () => {
-  const { user, logout } = useContext(AuthContext);
   const { areaId } = useParams();
   const navigate = useNavigate();
   const [area, setArea] = useState(null);
-  const [query, setQuery] = useState("");
-  const [results, setResults] = useState([]);
-  const [loading, setLoading] = useState(false);
+
+  const [dueTab, setDueTab] = useState("this");
+  const [dueBills, setDueBills] = useState([]);
+
+  const [collectionDate, setCollectionDate] = useState(todayStr());
+  const [collectionData, setCollectionData] = useState(null);
+
+  const [complaints, setComplaints] = useState([]);
+  const [reminders, setReminders] = useState([]);
 
   useEffect(() => {
     const stored = localStorage.getItem("dc_selected_area");
@@ -39,99 +40,184 @@ const Dashboard = () => {
 
   useEffect(() => {
     if (!area) return;
-    const timer = setTimeout(() => {
-      setLoading(true);
-      api
-        .get("/consumers/search", { params: { areaId: area._id, q: query } })
-        .then(({ data }) => setResults(data))
-        .catch(() => setResults([]))
-        .finally(() => setLoading(false));
-    }, 300); // typing ke thoda ruk ke search karo
-    return () => clearTimeout(timer);
-  }, [query, area]);
+    api
+      .get("/reports/status-list", {
+        params: { areaId: area._id, status: "due" },
+      })
+      .then(({ data }) => setDueBills(data));
+    api
+      .get("/complaints", { params: { areaId: area._id, status: "open" } })
+      .then(({ data }) => setComplaints(data));
+    api
+      .get("/reports/reminders", { params: { areaId: area._id } })
+      .then(({ data }) => setReminders(data));
+  }, [area]);
 
-  const handleChangeArea = () => {
-    localStorage.removeItem("dc_selected_area");
-    navigate("/");
-  };
+  useEffect(() => {
+    if (!area) return;
+    api
+      .get("/reports/today-collection", {
+        params: { areaId: area._id, date: collectionDate },
+      })
+      .then(({ data }) => setCollectionData(data));
+  }, [area, collectionDate]);
 
   if (!area) return null;
 
+  const thisMonthDue = dueBills.filter((b) => isSameMonth(b.followUpDate));
+  const nextMonthDue = dueBills.filter((b) => !isSameMonth(b.followUpDate));
+  const visibleDue = dueTab === "this" ? thisMonthDue : nextMonthDue;
+
   return (
     <div className="min-h-screen bg-gray-100 px-4 py-6">
-      <div className="max-w-md mx-auto">
-        <div className="flex items-center justify-between mb-3">
-          <div>
-            <p className="text-sm text-gray-500">Welcome</p>
-            <h1 className="text-xl font-bold text-gray-800">{user?.name}</h1>
+      <div className="max-w-md mx-auto space-y-4">
+        <div>
+          <p className="text-sm text-gray-500">Area</p>
+          <h1 className="text-xl font-bold text-gray-800">{area.name}</h1>
+        </div>
+
+        {/* Shortcuts */}
+        <div className="grid grid-cols-4 gap-2">
+          <Link
+            to={`/area/${area._id}/search`}
+            className="bg-white rounded-xl shadow-sm p-3 text-center text-xs font-medium text-gray-700 hover:bg-blue-50"
+          >
+            🔍
+            <br />
+            Collection
+          </Link>
+          <Link
+            to={`/area/${area._id}/reports`}
+            className="bg-white rounded-xl shadow-sm p-3 text-center text-xs font-medium text-gray-700 hover:bg-blue-50"
+          >
+            📊
+            <br />
+            Reports
+          </Link>
+          <Link
+            to={`/area/${area._id}/complaints`}
+            className="bg-white rounded-xl shadow-sm p-3 text-center text-xs font-medium text-gray-700 hover:bg-blue-50"
+          >
+            📢
+            <br />
+            Complaints
+          </Link>
+          <Link
+            to="/import-data"
+            className="bg-white rounded-xl shadow-sm p-3 text-center text-xs font-medium text-gray-700 hover:bg-blue-50"
+          >
+            📥
+            <br />
+            Import
+          </Link>
+        </div>
+
+        {/* Collection card */}
+        <div className="bg-white rounded-2xl shadow-md p-5">
+          <div className="flex items-center justify-between mb-2">
+            <p className="font-semibold text-gray-800">Collection</p>
+            <input
+              type="date"
+              value={collectionDate}
+              max={todayStr()}
+              onChange={(e) => setCollectionDate(e.target.value)}
+              className="text-xs border border-gray-300 rounded-lg px-2 py-1"
+            />
           </div>
-          <button
-            onClick={logout}
-            className="text-sm text-red-600 border border-red-200 rounded-lg px-3 py-1.5 hover:bg-red-50 h-fit"
-          >
-            Logout
-          </button>
+          {collectionData ? (
+            <>
+              <p className="text-3xl font-bold text-green-700">
+                ₹{collectionData.total}
+              </p>
+              <p className="text-xs text-gray-500">
+                {collectionData.count} consumers se collection
+              </p>
+            </>
+          ) : (
+            <p className="text-sm text-gray-400">Load ho raha hai...</p>
+          )}
         </div>
 
-        <div className="flex items-center justify-between mb-3">
-          <p className="text-sm text-gray-500">
-            Area:{" "}
-            <span className="font-semibold text-gray-800">{area.name}</span>
-          </p>
-          <button
-            onClick={handleChangeArea}
-            className="text-xs text-blue-600 hover:underline"
-          >
-            Area Badlein
-          </button>
-        </div>
-
-        <input
-          type="text"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Naam, Consumer ID, VC No. ya mobile se dhoondein..."
-          autoFocus
-          className="w-full border border-gray-300 rounded-xl px-4 py-3 mb-3 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-        />
-
-        {loading && (
-          <p className="text-sm text-gray-400 text-center">
-            Dhoond rahe hain...
-          </p>
-        )}
-
-        {!loading && results.length === 0 && (
-          <p className="text-sm text-gray-400 text-center bg-white rounded-xl p-4">
-            {query
-              ? "Koi consumer nahi mila"
-              : "Search karke consumer dhoondein"}
-          </p>
-        )}
-
-        <div className="space-y-2">
-          {results.map((c) => {
-            const badge = statusBadge(c.currentBill);
-            return (
-              <button
-                key={c._id}
-                onClick={() => navigate(`/area/${area._id}/consumer/${c._id}`)}
-                className="w-full bg-white rounded-xl shadow-sm p-4 text-left hover:shadow-md transition flex items-center justify-between"
-              >
-                <div>
-                  <p className="font-semibold text-gray-800">{c.name}</p>
-                  <p className="text-xs text-gray-500">
-                    {c.consumerId} {c.address ? `• ${c.address}` : ""}
-                  </p>
-                </div>
-                <span
-                  className={`text-xs font-medium px-2 py-1 rounded-full ${badge.color}`}
+        {/* Due card */}
+        <div className="bg-white rounded-2xl shadow-md p-5">
+          <p className="font-semibold text-gray-800 mb-2">Due Consumers</p>
+          <div className="flex gap-2 mb-3">
+            <button
+              onClick={() => setDueTab("this")}
+              className={`text-xs font-medium px-3 py-1.5 rounded-full ${dueTab === "this" ? "bg-yellow-500 text-white" : "bg-gray-100 text-gray-600"}`}
+            >
+              Is Mahine ({thisMonthDue.length})
+            </button>
+            <button
+              onClick={() => setDueTab("next")}
+              className={`text-xs font-medium px-3 py-1.5 rounded-full ${dueTab === "next" ? "bg-yellow-500 text-white" : "bg-gray-100 text-gray-600"}`}
+            >
+              Agle Mahine ({nextMonthDue.length})
+            </button>
+          </div>
+          {visibleDue.length === 0 ? (
+            <p className="text-sm text-gray-400">Koi due consumer nahi</p>
+          ) : (
+            <div className="space-y-2 max-h-64 overflow-y-auto">
+              {visibleDue.map((b) => (
+                <Link
+                  key={b._id}
+                  to={`/area/${area._id}/consumer/${b.consumerId?._id}`}
+                  className="block text-sm border-b pb-1.5"
                 >
-                  {badge.label}
-                </span>
-              </button>
-            );
-          })}
+                  <span className="font-medium text-gray-800">
+                    {b.consumerId?.name}
+                  </span>
+                  <span className="text-gray-500">
+                    {" "}
+                    — ₹{b.amount - (b.amountPaid || 0)} baaki
+                  </span>
+                  {b.dueRemark && (
+                    <p className="text-xs text-gray-400">{b.dueRemark}</p>
+                  )}
+                </Link>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Reminders */}
+        {reminders.length > 0 && (
+          <div className="bg-red-50 border border-red-200 rounded-2xl p-5">
+            <p className="font-semibold text-red-700 mb-2">
+              ⏰ Aaj ke Reminders
+            </p>
+            <div className="space-y-2">
+              {reminders.map((r) => (
+                <Link
+                  key={r._id}
+                  to={`/area/${area._id}/consumer/${r.consumerId?._id}`}
+                  className="block text-sm"
+                >
+                  <span className="font-medium text-gray-800">
+                    {r.consumerId?.name}
+                  </span>
+                  <span className="text-gray-500"> — {r.dueRemark}</span>
+                </Link>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Complaints */}
+        <div className="bg-orange-50 border border-orange-200 rounded-2xl p-5">
+          <div className="flex items-center justify-between">
+            <p className="font-semibold text-orange-700">Open Complaints</p>
+            <span className="text-2xl font-bold text-orange-700">
+              {complaints.length}
+            </span>
+          </div>
+          <Link
+            to={`/area/${area._id}/complaints`}
+            className="text-xs text-orange-700 hover:underline"
+          >
+            Sab dekhein →
+          </Link>
         </div>
       </div>
     </div>

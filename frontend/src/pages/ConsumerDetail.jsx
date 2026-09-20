@@ -1,29 +1,38 @@
-import { useState, useEffect, useContext } from "react";
+import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { AuthContext } from "../context/AuthContext";
 import api from "../api/axios";
 
 const formatDate = (d) => (d ? new Date(d).toLocaleDateString("en-IN") : "-");
 const formatDateTime = (d) => (d ? new Date(d).toLocaleString("en-IN") : "-");
+const tomorrowStr = () => {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  return d.toISOString().slice(0, 10);
+};
 
 const ConsumerDetail = () => {
   const { areaId, consumerId } = useParams();
   const navigate = useNavigate();
-  const { user } = useContext(AuthContext);
 
   const [consumer, setConsumer] = useState(null);
   const [error, setError] = useState("");
-  const [amount, setAmount] = useState("");
+  const [amountPaid, setAmountPaid] = useState("");
+  const [editingAmount, setEditingAmount] = useState(false);
+  const [newAmount, setNewAmount] = useState("");
   const [showDueForm, setShowDueForm] = useState(false);
   const [dueRemark, setDueRemark] = useState("");
+  const [followUpDate, setFollowUpDate] = useState(tomorrowStr());
   const [showServiceForm, setShowServiceForm] = useState(false);
   const [servicePurpose, setServicePurpose] = useState("service");
   const [serviceNote, setServiceNote] = useState("");
   const [serviceOutcome, setServiceOutcome] = useState("not_paid");
   const [serviceRemark, setServiceRemark] = useState("");
+  const [showComplaintForm, setShowComplaintForm] = useState(false);
+  const [complaintText, setComplaintText] = useState("");
   const [showHistory, setShowHistory] = useState(false);
   const [history, setHistory] = useState(null);
   const [busy, setBusy] = useState("");
+  const [message, setMessage] = useState("");
 
   const load = () => {
     api
@@ -41,12 +50,29 @@ const ConsumerDetail = () => {
     setError("");
     try {
       await api.put(`/consumers/${consumerId}/collect`, {
-        amount: amount || undefined,
+        amountPaid: amountPaid || 0,
       });
-      setAmount("");
+      setAmountPaid("");
       load();
     } catch (err) {
       setError(err.response?.data?.message || "Collect nahi hua");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const handleEditAmount = async () => {
+    setBusy("editAmount");
+    setError("");
+    try {
+      await api.put(`/consumers/${consumerId}/edit-amount`, {
+        amount: newAmount,
+      });
+      setEditingAmount(false);
+      setNewAmount("");
+      load();
+    } catch (err) {
+      setError(err.response?.data?.message || "Amount edit nahi hua");
     } finally {
       setBusy("");
     }
@@ -69,7 +95,10 @@ const ConsumerDetail = () => {
     setBusy("due");
     setError("");
     try {
-      await api.put(`/consumers/${consumerId}/due`, { remark: dueRemark });
+      await api.put(`/consumers/${consumerId}/due`, {
+        remark: dueRemark,
+        followUpDate: followUpDate || null,
+      });
       setDueRemark("");
       setShowDueForm(false);
       load();
@@ -95,6 +124,21 @@ const ConsumerDetail = () => {
       setShowServiceForm(false);
     } catch (err) {
       setError(err.response?.data?.message || "Save nahi hua");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const handleComplaintSubmit = async () => {
+    setBusy("complaint");
+    setError("");
+    try {
+      await api.post("/complaints", { consumerId, complaintText });
+      setComplaintText("");
+      setShowComplaintForm(false);
+      setMessage("Complaint darj ho gayi");
+    } catch (err) {
+      setError(err.response?.data?.message || "Complaint darj nahi hui");
     } finally {
       setBusy("");
     }
@@ -127,26 +171,31 @@ const ConsumerDetail = () => {
 
   const bill = consumer.currentBill;
   const isPaid = bill?.status === "paid";
+  const balance = bill
+    ? bill.amount - (bill.amountPaid || 0)
+    : consumer.monthlyAmount || 0;
 
   return (
     <div className="min-h-screen bg-gray-100 px-4 py-6">
       <div className="max-w-md mx-auto space-y-4">
-        <div className="flex items-center justify-between">
-          <button
-            onClick={() => navigate(`/area/${areaId}`)}
-            className="text-sm text-blue-600 hover:underline"
-          >
-            ← Wapas Search Pe
-          </button>
-        </div>
+        <button
+          onClick={() => navigate(`/area/${areaId}/search`)}
+          className="text-sm text-blue-600 hover:underline"
+        >
+          ← Wapas Search Pe
+        </button>
 
+        {message && (
+          <p className="text-green-700 text-sm bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+            {message}
+          </p>
+        )}
         {error && (
           <p className="text-red-600 text-sm bg-red-50 border border-red-200 rounded-lg px-3 py-2">
             {error}
           </p>
         )}
 
-        {/* Basic Info */}
         <div className="bg-white rounded-2xl shadow-md p-5 space-y-1">
           <h1 className="text-lg font-bold text-gray-800">{consumer.name}</h1>
           <p className="text-sm text-gray-500">
@@ -179,9 +228,61 @@ const ConsumerDetail = () => {
           </div>
         </div>
 
-        {/* Current Month Collection */}
         <div className="bg-white rounded-2xl shadow-md p-5 space-y-3">
-          <p className="font-semibold text-gray-800">Is Mahine ka Collection</p>
+          <div className="flex items-center justify-between">
+            <p className="font-semibold text-gray-800">
+              Is Mahine ka Collection
+            </p>
+            {!editingAmount ? (
+              <button
+                onClick={() => {
+                  setEditingAmount(true);
+                  setNewAmount(
+                    String(bill?.amount ?? consumer.monthlyAmount ?? 0),
+                  );
+                }}
+                className="text-xs text-blue-600 hover:underline"
+              >
+                ✏️ Amount Edit
+              </button>
+            ) : (
+              <div className="flex gap-1 items-center">
+                <input
+                  type="number"
+                  value={newAmount}
+                  onChange={(e) => setNewAmount(e.target.value)}
+                  className="w-20 border border-gray-300 rounded px-1.5 py-0.5 text-xs"
+                />
+                <button
+                  onClick={handleEditAmount}
+                  disabled={busy === "editAmount"}
+                  className="text-xs bg-blue-600 text-white px-2 py-0.5 rounded"
+                >
+                  Save
+                </button>
+                <button
+                  onClick={() => setEditingAmount(false)}
+                  className="text-xs text-gray-500"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+          </div>
+
+          <p className="text-xs text-gray-500">
+            Package Amount:{" "}
+            <span className="font-semibold text-gray-700">
+              ₹{bill?.amount ?? consumer.monthlyAmount ?? 0}
+            </span>
+            {bill?.amountPaid > 0 && !isPaid && (
+              <>
+                {" "}
+                • Ab tak mila: ₹{bill.amountPaid} • Baaki:{" "}
+                <span className="text-red-600 font-semibold">₹{balance}</span>
+              </>
+            )}
+          </p>
 
           {isPaid ? (
             <div className="bg-green-50 border border-green-200 rounded-lg p-3">
@@ -203,14 +304,19 @@ const ConsumerDetail = () => {
                   <p className="text-yellow-800 font-semibold">
                     Due — {bill.dueRemark || "koi remark nahi"}
                   </p>
+                  {bill.followUpDate && (
+                    <p className="text-xs text-yellow-700">
+                      Follow-up: {formatDate(bill.followUpDate)}
+                    </p>
+                  )}
                 </div>
               )}
               <div className="flex gap-2">
                 <input
                   type="number"
-                  value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
-                  placeholder={`Amount (₹${consumer.monthlyAmount || 0})`}
+                  value={amountPaid}
+                  onChange={(e) => setAmountPaid(e.target.value)}
+                  placeholder={`Aaj kitna mila? (baaki ₹${balance})`}
                   className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm"
                 />
                 <button
@@ -236,6 +342,17 @@ const ConsumerDetail = () => {
                     className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
                     rows={2}
                   />
+                  <div>
+                    <label className="text-xs text-gray-500">
+                      Kab denge bole (reminder date):
+                    </label>
+                    <input
+                      type="date"
+                      value={followUpDate}
+                      onChange={(e) => setFollowUpDate(e.target.value)}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm mt-1"
+                    />
+                  </div>
                   <button
                     onClick={handleDue}
                     disabled={busy === "due"}
@@ -249,7 +366,6 @@ const ConsumerDetail = () => {
           )}
         </div>
 
-        {/* Service Entry */}
         <div className="bg-white rounded-2xl shadow-md p-5 space-y-3">
           <button
             onClick={() => setShowServiceForm((s) => !s)}
@@ -306,7 +422,33 @@ const ConsumerDetail = () => {
           )}
         </div>
 
-        {/* History */}
+        <div className="bg-white rounded-2xl shadow-md p-5 space-y-3">
+          <button
+            onClick={() => setShowComplaintForm((s) => !s)}
+            className="text-sm font-semibold text-gray-700"
+          >
+            + Complaint Darj Karein
+          </button>
+          {showComplaintForm && (
+            <div className="space-y-2">
+              <textarea
+                value={complaintText}
+                onChange={(e) => setComplaintText(e.target.value)}
+                placeholder="Complaint kya hai"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                rows={2}
+              />
+              <button
+                onClick={handleComplaintSubmit}
+                disabled={busy === "complaint"}
+                className="w-full bg-orange-600 hover:bg-orange-700 text-white text-sm font-semibold py-2 rounded-lg"
+              >
+                Complaint Save Karein
+              </button>
+            </div>
+          )}
+        </div>
+
         <div className="bg-white rounded-2xl shadow-md p-5 space-y-3">
           <button
             onClick={loadHistory}
@@ -330,7 +472,7 @@ const ConsumerDetail = () => {
                   >
                     <span>{b.month}</span>
                     <span className="capitalize">
-                      {b.status} — ₹{b.amount}
+                      {b.status} — ₹{b.amountPaid || 0}/₹{b.amount}
                     </span>
                   </div>
                 ))}

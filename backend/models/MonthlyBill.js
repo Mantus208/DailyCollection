@@ -7,9 +7,10 @@ const monthlyBillSchema = new mongoose.Schema(
       ref: "Consumer",
       required: true,
     },
-    month: { type: String, required: true }, // "2026-08" format
+    month: { type: String, required: true },
     billNo: { type: String, trim: true, default: "" },
     amount: { type: Number, required: true },
+    amountPaid: { type: Number, default: 0 },
     billDate: { type: Date, default: null },
     status: {
       type: String,
@@ -18,6 +19,7 @@ const monthlyBillSchema = new mongoose.Schema(
     },
     paidDate: { type: Date, default: null },
     dueRemark: { type: String, trim: true, default: "" },
+    followUpDate: { type: Date, default: null }, // "kab denge bole the" — reminder ke liye
     lastEditedBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -28,7 +30,6 @@ const monthlyBillSchema = new mongoose.Schema(
   { timestamps: true },
 );
 
-// Ek consumer ka ek month me sirf ek hi bill record hoga
 monthlyBillSchema.index({ consumerId: 1, month: 1 }, { unique: true });
 
 module.exports = mongoose.model("MonthlyBill", monthlyBillSchema);

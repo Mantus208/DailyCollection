@@ -7,6 +7,11 @@ const areaRoutes = require("./routes/areaRoutes");
 const userRoutes = require("./routes/userRoutes");
 const importRoutes = require("./routes/importRoutes");
 const consumerRoutes = require("./routes/consumerRoutes");
+const complaintRoutes = require("./routes/complaintRoutes");
+const reportRoutes = require("./routes/reportRoutes");
+const franchiseeRoutes = require("./routes/franchiseeRoutes");
+const activityLogRoutes = require("./routes/activityLogRoutes");
+const stockRoutes = require("./routes/stockRoutes");
 
 connectDB();
 
@@ -24,6 +29,11 @@ app.use("/api/areas", areaRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/import", importRoutes);
 app.use("/api/consumers", consumerRoutes);
+app.use("/api/complaints", complaintRoutes);
+app.use("/api/reports", reportRoutes);
+app.use("/api/franchisees", franchiseeRoutes);
+app.use("/api/activity-log", activityLogRoutes);
+app.use("/api/stock", stockRoutes);
 
 app.use((err, req, res, next) => {
   console.error(err.stack);

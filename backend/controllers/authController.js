@@ -1,6 +1,7 @@
 const jwt = require("jsonwebtoken");
 const User = require("../models/User");
 const { sendOtpEmail, sendPasswordResetOtp } = require("../utils/sendEmail");
+const { logActivity } = require("../utils/logActivity");
 
 const generateToken = (id) => {
   return jwt.sign({ id }, process.env.JWT_SECRET, {
@@ -244,11 +245,9 @@ const resetPassword = async (req, res) => {
     const user = await User.findOne({ username: username.toLowerCase() });
 
     if (!user || !user.otp) {
-      return res
-        .status(400)
-        .json({
-          message: "Koi pending reset request nahi mila is username ke liye",
-        });
+      return res.status(400).json({
+        message: "Koi pending reset request nahi mila is username ke liye",
+      });
     }
 
     if (user.otpExpires < Date.now()) {
@@ -305,7 +304,7 @@ const loginUser = async (req, res) => {
     if (!isMatch) {
       return res.status(401).json({ message: "Galat username ya password" });
     }
-
+    await logActivity(user, "login", "Login kiya");
     return res.json({
       _id: user._id,
       name: user.name,
