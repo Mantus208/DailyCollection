@@ -42,6 +42,10 @@ const ConsumerDetail = () => {
   const navigate = useNavigate();
 
   const [consumer, setConsumer] = useState(null);
+  const [concessionAmount, setConcessionAmount] = useState("");
+  const [concessionRemark, setConcessionRemark] = useState("");
+  const [showConcessionForm, setShowConcessionForm] = useState(false);
+  const [showStock, setShowStock] = useState(false);
   const [error, setError] = useState("");
   const [amountPaid, setAmountPaid] = useState("");
   const [editingAmount, setEditingAmount] = useState(false);
@@ -114,6 +118,27 @@ const ConsumerDetail = () => {
       load();
     } catch (err) {
       setError(err.response?.data?.message || "Collect nahi hua");
+    } finally {
+      setBusy("");
+    }
+  };
+  const handleConcession = async () => {
+    setBusy("concession");
+    setError("");
+
+    try {
+      await api.put(`/consumers/${consumerId}/concession`, {
+        amount: concessionAmount,
+        remark: concessionRemark.trim(),
+      });
+
+      setConcessionAmount("");
+      setConcessionRemark("");
+      setShowConcessionForm(false);
+
+      await load();
+    } catch (err) {
+      setError(err.response?.data?.message || "Concession apply nahi hua");
     } finally {
       setBusy("");
     }
@@ -191,7 +216,7 @@ const ConsumerDetail = () => {
       setStockUnitPrice("");
       setStockAmountPaid("");
       setStockRemark("");
-
+      setShowStock(false);
       await loadStockItems();
     } catch (err) {
       setError(
@@ -578,7 +603,48 @@ const ConsumerDetail = () => {
                 >
                   Due Karein
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setShowConcessionForm((v) => !v)}
+                  className="w-full rounded-xl border border-orange-200 bg-orange-50 px-4 py-2.5 text-sm font-semibold text-orange-700 hover:bg-orange-100"
+                >
+                  {showConcessionForm
+                    ? "Concession Band Karein"
+                    : "Concession Dein"}
+                </button>
+                {showConcessionForm && (
+                  <div className="mt-3 rounded-xl border border-orange-200 bg-orange-50 p-4">
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <input
+                        type="number"
+                        min="1"
+                        value={concessionAmount}
+                        onChange={(e) => setConcessionAmount(e.target.value)}
+                        placeholder="Concession ₹"
+                        className="w-full rounded-xl border border-orange-200 bg-white px-3 py-2.5 text-sm outline-none"
+                      />
 
+                      <input
+                        type="text"
+                        value={concessionRemark}
+                        onChange={(e) => setConcessionRemark(e.target.value)}
+                        placeholder="Remark (aged / pehchan wale etc.)"
+                        className="w-full rounded-xl border border-orange-200 bg-white px-3 py-2.5 text-sm outline-none"
+                      />
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleConcession}
+                      disabled={busy === "concession"}
+                      className="mt-3 w-full rounded-xl bg-orange-500 px-4 py-2.5 text-sm font-bold text-white disabled:opacity-50"
+                    >
+                      {busy === "concession"
+                        ? "Applying..."
+                        : "Apply Concession"}
+                    </button>
+                  </div>
+                )}
                 {showDueForm && (
                   <div className="space-y-3 rounded-2xl bg-slate-50 p-4">
                     <textarea
@@ -610,183 +676,202 @@ const ConsumerDetail = () => {
           </Section>
         </div>
         {/* STOCK SALE */}
-        <Section
-          title="Sell Stock Item"
-          subtitle="Consumer ko stock material bechein"
-        >
-          <div className="space-y-4">
-            {/* Item */}
+        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          {/* =====================================================
+      STOCK HEADER
+  ====================================================== */}
+          <button
+            type="button"
+            onClick={() => setShowStock((prev) => !prev)}
+            className="flex w-full items-center justify-between border-b border-slate-100 px-5 py-4 text-left transition hover:bg-slate-50"
+          >
             <div>
-              <label className="mb-1.5 block text-xs font-semibold text-slate-600">
-                Stock Item
-              </label>
+              <h2 className="text-base font-bold text-slate-900">
+                Sell Stock Item
+              </h2>
 
-              <select
-                value={stockItemId}
-                onChange={(e) => {
-                  const value = e.target.value;
-                  setStockItemId(value);
-
-                  const item = stockItems.find(
-                    (x) => String(x._id) === String(value),
-                  );
-
-                  if (item) {
-                    setStockUnitPrice(String(item.lastCostPerUnit || ""));
-                  } else {
-                    setStockUnitPrice("");
-                  }
-                }}
-                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
-              >
-                <option value="">Select item</option>
-
-                {stockItems.map((item) => (
-                  <option key={item._id} value={item._id}>
-                    {item.name} — Stock: {item.currentStock || 0}
-                  </option>
-                ))}
-              </select>
+              <p className="mt-1 text-xs text-slate-500">
+                Consumer ko stock material bechein
+              </p>
             </div>
 
-            {/* Available stock */}
-            {selectedStockItem && (
-              <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-blue-700">
-                    Available Stock
-                  </span>
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 text-slate-600">
+              {showStock ? "▲" : "▼"}
+            </div>
+          </button>
 
-                  <span className="text-lg font-bold text-blue-800">
-                    {selectedStockItem.currentStock || 0}
-                  </span>
-                </div>
-
-                <p className="mt-1 text-[11px] text-blue-600">
-                  {selectedStockItem.name}
-                </p>
-              </div>
-            )}
-
-            {/* Stock validation warning */}
-            {selectedStockItem &&
-              Number(stockQty) >
-                Number(selectedStockItem.currentStock || 0) && (
-                <p className="mt-2 text-xs font-bold text-red-600">
-                  ⚠️ Available stock sirf {selectedStockItem.currentStock} hai.
-                  Aap {stockQty} quantity enter kar rahe hain.
-                </p>
-              )}
-
-            {/* Qty + Rate */}
-            <div className="grid gap-3 sm:grid-cols-2">
+          {/* =====================================================
+      STOCK FORM
+  ====================================================== */}
+          {showStock && (
+            <div className="space-y-4 p-5">
+              {/* Item */}
               <div>
                 <label className="mb-1.5 block text-xs font-semibold text-slate-600">
-                  Quantity
+                  Stock Item
                 </label>
 
-                <input
-                  type="number"
-                  min="1"
-                  max={selectedStockItem?.currentStock ?? undefined}
-                  step="1"
-                  value={stockQty}
-                  onChange={(e) => setStockQty(e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
-                />
+                <select
+                  value={stockItemId}
+                  onChange={(e) => {
+                    const value = e.target.value;
+
+                    setStockItemId(value);
+
+                    // Selling rate manually enter hoga
+                    setStockUnitPrice("");
+                  }}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
+                >
+                  <option value="">Select item</option>
+
+                  {stockItems.map((item) => (
+                    <option key={item._id} value={item._id}>
+                      {item.name} — Stock: {item.currentStock || 0}
+                    </option>
+                  ))}
+                </select>
               </div>
 
+              {/* Available stock */}
+              {selectedStockItem && (
+                <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-blue-700">
+                      Available Stock
+                    </span>
+
+                    <span className="text-lg font-bold text-blue-800">
+                      {selectedStockItem.currentStock || 0}
+                    </span>
+                  </div>
+
+                  <p className="mt-1 text-[11px] text-blue-600">
+                    {selectedStockItem.name}
+                  </p>
+                </div>
+              )}
+
+              {/* Stock validation warning */}
+              {selectedStockItem &&
+                Number(stockQty) >
+                  Number(selectedStockItem.currentStock || 0) && (
+                  <p className="mt-2 text-xs font-bold text-red-600">
+                    ⚠️ Available stock sirf {selectedStockItem.currentStock}{" "}
+                    hai. Aap {stockQty} quantity enter kar rahe hain.
+                  </p>
+                )}
+
+              {/* Qty + Rate */}
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1.5 block text-xs font-semibold text-slate-600">
+                    Quantity
+                  </label>
+
+                  <input
+                    type="number"
+                    min="1"
+                    max={selectedStockItem?.currentStock ?? undefined}
+                    step="1"
+                    value={stockQty}
+                    onChange={(e) => setStockQty(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1.5 block text-xs font-semibold text-slate-600">
+                    Selling Rate / Unit
+                  </label>
+
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={stockUnitPrice}
+                    onChange={(e) => setStockUnitPrice(e.target.value)}
+                    placeholder="₹ Rate"
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
+                  />
+                </div>
+              </div>
+
+              {/* Amount summary */}
+              <div className="grid grid-cols-3 gap-2">
+                <div className="rounded-xl bg-slate-50 p-3">
+                  <p className="text-[11px] text-slate-500">Total</p>
+
+                  <p className="mt-1 text-lg font-bold text-slate-900">
+                    ₹{stockTotal}
+                  </p>
+                </div>
+
+                <div className="rounded-xl bg-emerald-50 p-3">
+                  <p className="text-[11px] text-emerald-600">Paid</p>
+
+                  <p className="mt-1 text-lg font-bold text-emerald-700">
+                    ₹{Number(stockAmountPaid || 0)}
+                  </p>
+                </div>
+
+                <div
+                  className={`rounded-xl p-3 ${
+                    stockPending > 0 ? "bg-amber-50" : "bg-slate-50"
+                  }`}
+                >
+                  <p className="text-[11px] text-slate-500">Pending</p>
+
+                  <p
+                    className={`mt-1 text-lg font-bold ${
+                      stockPending > 0 ? "text-amber-700" : "text-slate-800"
+                    }`}
+                  >
+                    ₹{Math.max(stockPending, 0)}
+                  </p>
+                </div>
+              </div>
+
+              {/* Amount Received */}
               <div>
                 <label className="mb-1.5 block text-xs font-semibold text-slate-600">
-                  Selling Rate / Unit
+                  Amount Received
                 </label>
 
                 <input
                   type="number"
                   min="0"
                   step="0.01"
-                  value={stockUnitPrice}
-                  onChange={(e) => setStockUnitPrice(e.target.value)}
-                  placeholder="₹ Rate"
+                  value={stockAmountPaid}
+                  onChange={(e) => setStockAmountPaid(e.target.value)}
+                  placeholder={`Aaj kitna mila? (Total ₹${stockTotal})`}
                   className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
                 />
               </div>
-            </div>
 
-            {/* Amount summary */}
-            <div className="grid grid-cols-3 gap-2">
-              <div className="rounded-xl bg-slate-50 p-3">
-                <p className="text-[11px] text-slate-500">Total</p>
-
-                <p className="mt-1 text-lg font-bold text-slate-900">
-                  ₹{stockTotal}
-                </p>
-              </div>
-
-              <div className="rounded-xl bg-emerald-50 p-3">
-                <p className="text-[11px] text-emerald-600">Paid</p>
-
-                <p className="mt-1 text-lg font-bold text-emerald-700">
-                  ₹{Number(stockAmountPaid || 0)}
-                </p>
-              </div>
-
-              <div
-                className={`rounded-xl p-3 ${
-                  stockPending > 0 ? "bg-amber-50" : "bg-slate-50"
-                }`}
-              >
-                <p className="text-[11px] text-slate-500">Pending</p>
-
-                <p
-                  className={`mt-1 text-lg font-bold ${
-                    stockPending > 0 ? "text-amber-700" : "text-slate-800"
-                  }`}
-                >
-                  ₹{Math.max(stockPending, 0)}
-                </p>
-              </div>
-            </div>
-
-            {/* Paid */}
-            <div>
-              <label className="mb-1.5 block text-xs font-semibold text-slate-600">
-                Amount Received
-              </label>
-
+              {/* Remark */}
               <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={stockAmountPaid}
-                onChange={(e) => setStockAmountPaid(e.target.value)}
-                placeholder={`Aaj kitna mila? (Total ₹${stockTotal})`}
+                type="text"
+                value={stockRemark}
+                onChange={(e) => setStockRemark(e.target.value)}
+                placeholder="Remark (optional)"
                 className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
               />
+
+              {/* Sell */}
+              <button
+                type="button"
+                onClick={handleStockSale}
+                disabled={
+                  stockLoading || !stockItemId || !stockQty || !stockUnitPrice
+                }
+                className="w-full rounded-xl bg-indigo-600 py-3 text-sm font-bold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {stockLoading ? "Selling..." : "Sell Item"}
+              </button>
             </div>
-
-            {/* Remark */}
-            <input
-              type="text"
-              value={stockRemark}
-              onChange={(e) => setStockRemark(e.target.value)}
-              placeholder="Remark (optional)"
-              className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
-            />
-
-            {/* Sell button */}
-            <button
-              type="button"
-              onClick={handleStockSale}
-              disabled={
-                stockLoading || !stockItemId || !stockQty || !stockUnitPrice
-              }
-              className="w-full rounded-xl bg-indigo-600 py-3 text-sm font-bold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {stockLoading ? "Selling..." : "Sell Item"}
-            </button>
-          </div>
-        </Section>
+          )}
+        </div>
         <div className="grid gap-5 lg:grid-cols-2">
           <Section
             title="Service / Visit"

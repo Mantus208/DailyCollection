@@ -180,7 +180,107 @@ const getConsumerDetail = async (req, res) => {
       .json({ message: "Server error", error: error.message });
   }
 };
+const applyConcession = async (req, res) => {
+  try {
+    const { amount, remark = "" } = req.body;
 
+    const concession = Number(amount);
+
+    if (!Number.isFinite(concession) || concession <= 0) {
+      return res.status(400).json({
+        message: "Valid concession amount enter karein",
+      });
+    }
+
+    const consumer = await Consumer.findById(req.params.id);
+
+    if (!consumer) {
+      return res.status(404).json({
+        message: "Consumer nahi mila",
+      });
+    }
+
+    const month = getCurrentMonth();
+
+    let bill = await MonthlyBill.findOne({
+      consumerId: consumer._id,
+      month,
+    });
+
+    if (!bill) {
+      bill = await MonthlyBill.create({
+        consumerId: consumer._id,
+        month,
+        amount: consumer.monthlyAmount || 0,
+        amountPaid: 0,
+        status: "unpaid",
+      });
+    }
+
+    const currentAmount = Number(bill.amount || 0);
+    const amountPaid = Number(bill.amountPaid || 0);
+    const balance = currentAmount - amountPaid;
+
+    if (balance <= 0) {
+      return res.status(400).json({
+        message: "Is bill me concession ke liye balance nahi hai",
+      });
+    }
+
+    if (concession > balance) {
+      return res.status(400).json({
+        message: `Maximum ₹${balance} concession de sakte hain`,
+      });
+    }
+
+    // Original amount preserve karein
+    if (!bill.baseAmount || bill.baseAmount === 0) {
+      bill.baseAmount = currentAmount;
+    }
+
+    bill.concessionAmount = Number(bill.concessionAmount || 0) + concession;
+
+    bill.concessionRemark = remark.trim();
+
+    // Current month ka payable amount reduce
+    bill.amount = currentAmount - concession;
+
+    // Agar concession ke baad paid amount complete ho gaya
+    if (bill.amountPaid >= bill.amount) {
+      bill.amountPaid = bill.amount;
+      bill.status = "paid";
+      bill.paidDate = new Date();
+      bill.dueRemark = "";
+      bill.followUpDate = null;
+    } else {
+      bill.status = "due";
+
+      const newBalance = bill.amount - bill.amountPaid;
+
+      bill.dueRemark = `Concession ₹${concession} ke baad ₹${newBalance} baaki hai`;
+    }
+
+    bill.lastEditedBy = req.user._id;
+    bill.lastEditedAt = new Date();
+
+    await bill.save();
+
+    await logActivity(
+      req.user,
+      "concession",
+      `${consumer.name} (${consumer.consumerId}) ko ₹${concession} concession diya — ${month}`,
+    );
+
+    return res.json(bill);
+  } catch (error) {
+    console.error("applyConcession error:", error);
+
+    return res.status(500).json({
+      message: error.message || "Concession apply nahi hua",
+      error: error.message || "Unknown error",
+    });
+  }
+};
 const collectPayment = async (req, res) => {
   try {
     const { amountPaid } = req.body;
@@ -623,4 +723,5 @@ module.exports = {
   markDue,
   logVisit,
   getHistory,
+  applyConcession,
 };

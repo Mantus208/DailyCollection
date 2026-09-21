@@ -11,6 +11,7 @@ const {
   markDue,
   logVisit,
   getHistory,
+  applyConcession,
 } = require("../controllers/consumerController");
 const { protect, restrictTo } = require("../middleware/authMiddleware");
 
@@ -29,6 +30,7 @@ router.put(
   restrictTo("admin"),
   assignAreaByAddress,
 );
+router.put("/:id/concession", protect, applyConcession);
 
 router.get("/search", protect, searchConsumers);
 router.get("/:id", protect, getConsumerDetail);
