@@ -184,12 +184,30 @@ const getConsumerDetail = async (req, res) => {
 const collectPayment = async (req, res) => {
   try {
     const { amountPaid } = req.body;
+
+    const paidNow = Number(amountPaid);
+
+    if (!Number.isFinite(paidNow) || paidNow <= 0) {
+      return res.status(400).json({
+        message: "Valid collection amount enter karein",
+      });
+    }
+
     const consumer = await Consumer.findById(req.params.id);
-    if (!consumer)
-      return res.status(404).json({ message: "Consumer nahi mila" });
+
+    if (!consumer) {
+      return res.status(404).json({
+        message: "Consumer nahi mila",
+      });
+    }
 
     const month = getCurrentMonth();
-    let bill = await MonthlyBill.findOne({ consumerId: consumer._id, month });
+
+    let bill = await MonthlyBill.findOne({
+      consumerId: consumer._id,
+      month,
+    });
+
     if (!bill) {
       bill = await MonthlyBill.create({
         consumerId: consumer._id,
@@ -200,30 +218,29 @@ const collectPayment = async (req, res) => {
       });
     }
 
-    const paidNow = Number(amountPaid) || 0;
-    bill.amountPaid = (bill.amountPaid || 0) + paidNow;
-    bill.lastEditedBy = req.user._id;
-    bill.lastEditedAt = new Date();
-    // ---------------------------------------------
-    // Reverse latest collection when Paid -> Unpaid
-    // ---------------------------------------------
-    const latestCollection = await VisitLog.findOne({
-      consumerId: id,
-      purpose: "collection",
-      amountCollected: { $gt: 0 },
-      reversed: { $ne: true },
-      outcome: { $in: ["paid", "promised_later"] },
-    }).sort({ createdAt: -1 });
+    const billAmount = Number(bill.amount || 0);
+    const alreadyPaid = Number(bill.amountPaid || 0);
+    const balanceBefore = billAmount - alreadyPaid;
 
-    if (latestCollection) {
-      latestCollection.reversed = true;
-      await latestCollection.save();
-
-      console.log(
-        `Collection reversed: ${latestCollection._id} | ₹${latestCollection.amountCollected}`,
-      );
+    if (balanceBefore <= 0) {
+      return res.status(400).json({
+        message: "Is bill ka payment already complete hai",
+      });
     }
 
+    if (paidNow > balanceBefore) {
+      return res.status(400).json({
+        message: `Maximum ₹${balanceBefore} hi collect kar sakte hain`,
+      });
+    }
+
+    // Add current collection
+    bill.amountPaid = alreadyPaid + paidNow;
+
+    bill.lastEditedBy = req.user._id;
+    bill.lastEditedAt = new Date();
+
+    // Paid / Partial Due
     if (bill.amount > 0 && bill.amountPaid >= bill.amount) {
       bill.status = "paid";
       bill.paidDate = new Date();
@@ -231,12 +248,15 @@ const collectPayment = async (req, res) => {
       bill.followUpDate = null;
     } else {
       bill.status = "due";
+
       const balance = bill.amount - bill.amountPaid;
+
       bill.dueRemark = `Partial payment — ₹${balance} baaki hai`;
     }
 
     await bill.save();
 
+    // Save collection history
     await VisitLog.create({
       consumerId: consumer._id,
       visitedBy: req.user._id,
@@ -244,6 +264,8 @@ const collectPayment = async (req, res) => {
       outcome: bill.status === "paid" ? "paid" : "promised_later",
       amountCollected: paidNow,
       customerRemark: bill.status !== "paid" ? bill.dueRemark : "",
+      followUpDate: null,
+      reversed: false,
     });
 
     await logActivity(
@@ -254,10 +276,12 @@ const collectPayment = async (req, res) => {
 
     return res.json(bill);
   } catch (error) {
-    console.error("collectPayment error:", error);
-    return res
-      .status(500)
-      .json({ message: "Server error", error: error.message });
+    console.error("collectPayment FULL ERROR:", error);
+
+    return res.status(500).json({
+      message: error.message || "Server error",
+      error: error.message || "Unknown error",
+    });
   }
 };
 
@@ -311,17 +335,54 @@ const editBillAmount = async (req, res) => {
 const markUnpaid = async (req, res) => {
   try {
     const consumer = await Consumer.findById(req.params.id);
-    if (!consumer)
-      return res.status(404).json({ message: "Consumer nahi mila" });
+
+    if (!consumer) {
+      return res.status(404).json({
+        message: "Consumer nahi mila",
+      });
+    }
 
     const month = getCurrentMonth();
-    let bill = await MonthlyBill.findOne({ consumerId: consumer._id, month });
+
+    let bill = await MonthlyBill.findOne({
+      consumerId: consumer._id,
+      month,
+    });
+
+    // -------------------------------------------------
+    // Reverse latest collection
+    // -------------------------------------------------
+    const latestCollection = await VisitLog.findOne({
+      consumerId: consumer._id,
+      purpose: "collection",
+      amountCollected: { $gt: 0 },
+      reversed: { $ne: true },
+      outcome: { $in: ["paid", "promised_later"] },
+    }).sort({ createdAt: -1 });
+
+    if (latestCollection) {
+      latestCollection.reversed = true;
+      await latestCollection.save();
+
+      console.log(
+        `Collection reversed: ${latestCollection._id} | ₹${latestCollection.amountCollected}`,
+      );
+    }
+
+    // -------------------------------------------------
+    // Reset current month's bill
+    // -------------------------------------------------
     if (!bill) {
       bill = await MonthlyBill.create({
         consumerId: consumer._id,
         month,
-        amount: consumer.monthlyAmount,
+        amount: consumer.monthlyAmount || 0,
         status: "unpaid",
+        amountPaid: 0,
+        dueRemark: "",
+        followUpDate: null,
+        lastEditedBy: req.user._id,
+        lastEditedAt: new Date(),
       });
     } else {
       bill.status = "unpaid";
@@ -331,15 +392,22 @@ const markUnpaid = async (req, res) => {
       bill.followUpDate = null;
       bill.lastEditedBy = req.user._id;
       bill.lastEditedAt = new Date();
+
       await bill.save();
     }
 
+    // -------------------------------------------------
+    // Audit history
+    // -------------------------------------------------
     await VisitLog.create({
       consumerId: consumer._id,
       visitedBy: req.user._id,
       purpose: "collection",
       outcome: "not_paid",
+      amountCollected: 0,
       customerRemark: "Galti se Paid mark hua tha, Unpaid me correct kiya gaya",
+      followUpDate: null,
+      reversed: false,
     });
 
     await logActivity(
@@ -351,9 +419,11 @@ const markUnpaid = async (req, res) => {
     return res.json(bill);
   } catch (error) {
     console.error("markUnpaid error:", error);
-    return res
-      .status(500)
-      .json({ message: "Server error", error: error.message });
+
+    return res.status(500).json({
+      message: "Server error",
+      error: error.message,
+    });
   }
 };
 
