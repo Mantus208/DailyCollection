@@ -9,6 +9,62 @@ const emptyToInputDate = (val) => {
   return d.toISOString().slice(0, 10);
 };
 
+const ImportCard = ({
+  number,
+  title,
+  subtitle,
+  file,
+  setFile,
+  accept,
+  onUpload,
+  busy,
+  result,
+  children,
+  tone = "blue",
+}) => {
+  const tones = {
+    blue: "bg-blue-50 text-blue-700",
+    slate: "bg-slate-100 text-slate-700",
+    emerald: "bg-emerald-50 text-emerald-700",
+  };
+  return (
+    <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <div className="flex items-start gap-4 border-b border-slate-100 px-5 py-4">
+        <div
+          className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl text-sm font-bold ${tones[tone]}`}
+        >
+          {number}
+        </div>
+        <div className="min-w-0">
+          <h2 className="font-bold text-slate-900">{title}</h2>
+          <p className="mt-0.5 text-xs text-slate-500">{subtitle}</p>
+        </div>
+      </div>
+      <div className="p-5">
+        {children}
+        <input
+          type="file"
+          accept={accept}
+          onChange={(e) => setFile(e.target.files?.[0] || null)}
+          className="mt-1 block w-full rounded-xl border border-dashed border-slate-300 bg-slate-50 p-3 text-sm text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-white file:px-3 file:py-2 file:text-xs file:font-semibold file:text-slate-700"
+        />
+        <button
+          onClick={onUpload}
+          disabled={!file || !!busy}
+          className="mt-3 w-full rounded-xl bg-blue-600 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-200"
+        >
+          {busy ? "Uploading..." : "Upload File"}
+        </button>
+        {result && (
+          <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
+            {result}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+};
+
 const ImportData = () => {
   const [areas, setAreas] = useState([]);
   const [areaFile, setAreaFile] = useState(null);
@@ -21,10 +77,8 @@ const ImportData = () => {
   const [expiryResult, setExpiryResult] = useState(null);
   const [billResult, setBillResult] = useState(null);
   const [pendingConsumers, setPendingConsumers] = useState([]);
-
-  const [unmatchedGroups, setUnmatchedGroups] = useState(null); // null = not loaded yet
+  const [unmatchedGroups, setUnmatchedGroups] = useState(null);
   const [groupAreaChoice, setGroupAreaChoice] = useState({});
-
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
 
@@ -115,63 +169,74 @@ const ImportData = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-100 px-4 py-6">
-      <div className="max-w-md mx-auto space-y-4">
-        <div className="flex items-center justify-between">
-          <h1 className="text-xl font-bold text-gray-800">Data Import</h1>
-          <Link to="/" className="text-sm text-blue-600 hover:underline">
-            ← Wapas
+    <div className="min-h-screen bg-slate-50 px-4 py-6 md:px-8">
+      <div className="mx-auto max-w-6xl space-y-6">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <div className="mb-2 inline-flex rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700">
+              DATA MANAGEMENT
+            </div>
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900">
+              Import Data
+            </h1>
+            <p className="mt-1 text-sm text-slate-500">
+              Upload master, expiry and bill files step by step.
+            </p>
+          </div>
+          <Link
+            to="/"
+            className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+          >
+            ← Dashboard
           </Link>
         </div>
 
-        {error && (
-          <p className="text-red-600 text-sm bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-            {error}
-          </p>
-        )}
-
-        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-          One-time Setup
-        </p>
-
-        <div className="bg-white rounded-2xl shadow-md p-5">
-          <p className="font-semibold text-gray-800 mb-1">Area List</p>
-          <input
-            type="file"
-            accept=".xls,.xlsx,.csv"
-            onChange={(e) => setAreaFile(e.target.files[0])}
-            className="text-sm mb-3 w-full"
-          />
-          <button
-            onClick={() =>
-              uploadTo("/import/areas", areaFile, setAreaResult, "area")
-            }
-            disabled={!areaFile || busy === "area"}
-            className="w-full bg-gray-800 hover:bg-gray-900 disabled:bg-gray-400 text-white text-sm font-semibold py-2 rounded-lg"
-          >
-            {busy === "area"
-              ? "Upload ho raha hai..."
-              : "Area List Upload Karein"}
-          </button>
-          {areaResult && (
-            <div className="mt-3 text-sm bg-green-50 border border-green-200 rounded-lg p-3">
-              <p>Naye areas bane: {areaResult.created}</p>
+        <div className="grid gap-3 md:grid-cols-4">
+          {["Area List", "Master Customers", "Expiry", "Bills"].map((s, i) => (
+            <div
+              key={s}
+              className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm"
+            >
+              <span className="grid h-8 w-8 place-items-center rounded-lg bg-blue-50 text-xs font-bold text-blue-700">
+                {i + 1}
+              </span>
+              <span className="text-xs font-semibold text-slate-700">{s}</span>
             </div>
-          )}
+          ))}
         </div>
 
-        <div className="bg-white rounded-2xl shadow-md p-5">
-          <p className="font-semibold text-gray-800 mb-1">
-            All Customers (Master List)
-          </p>
-          <input
-            type="file"
+        {error && (
+          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {error}
+          </div>
+        )}
+
+        <div className="grid gap-5 lg:grid-cols-2">
+          <ImportCard
+            number="1"
+            title="Area List"
+            subtitle="One-time setup • XLS, XLSX or CSV"
+            file={areaFile}
+            setFile={setAreaFile}
             accept=".xls,.xlsx,.csv"
-            onChange={(e) => setMasterFile(e.target.files[0])}
-            className="text-sm mb-3 w-full"
+            busy={busy === "area"}
+            onUpload={() =>
+              uploadTo("/import/areas", areaFile, setAreaResult, "area")
+            }
+            result={
+              areaResult ? `New areas created: ${areaResult.created}` : null
+            }
+            tone="slate"
           />
-          <button
-            onClick={() =>
+          <ImportCard
+            number="2"
+            title="All Customers"
+            subtitle="Master customer list"
+            file={masterFile}
+            setFile={setMasterFile}
+            accept=".xls,.xlsx,.csv"
+            busy={busy === "master"}
+            onUpload={() =>
               uploadTo(
                 "/import/master-customers",
                 masterFile,
@@ -179,251 +244,219 @@ const ImportData = () => {
                 "master",
               )
             }
-            disabled={!masterFile || busy === "master"}
-            className="w-full bg-gray-800 hover:bg-gray-900 disabled:bg-gray-400 text-white text-sm font-semibold py-2 rounded-lg"
-          >
-            {busy === "master"
-              ? "Upload ho raha hai..."
-              : "Customer List Upload Karein"}
-          </button>
-          {masterResult && (
-            <div className="mt-3 text-sm bg-green-50 border border-green-200 rounded-lg p-3 space-y-1">
-              <p>Naye consumer: {masterResult.created}</p>
-              <p>Update hue: {masterResult.updated}</p>
-              <p className="text-amber-700">
-                Area match nahi hua: {masterResult.areaUnmatched}
-              </p>
-            </div>
-          )}
-          <button
-            onClick={loadUnmatchedGroups}
-            className="w-full text-blue-600 text-sm font-semibold hover:underline py-1"
-          >
-            Unmatched Areas Dekhein / Fix Karein →
-          </button>
+            result={
+              masterResult
+                ? `Created: ${masterResult.created} • Updated: ${masterResult.updated} • Area unmatched: ${masterResult.areaUnmatched}`
+                : null
+            }
+          />
+          <ImportCard
+            number="3"
+            title="Monthly Expiry"
+            subtitle="Update customer expiry data"
+            file={expiryFile}
+            setFile={setExpiryFile}
+            accept=".xls,.xlsx,.csv"
+            busy={busy === "expiry"}
+            onUpload={() =>
+              uploadTo("/import/expiry", expiryFile, setExpiryResult, "expiry")
+            }
+            result={
+              expiryResult
+                ? `Updated: ${expiryResult.updated} • Not found: ${expiryResult.unmatchedConsumers?.length || 0}`
+                : null
+            }
+          />
+          <ImportCard
+            number="4"
+            title="Monthly Bills"
+            subtitle="Refresh bill and consumer data"
+            file={billFile}
+            setFile={setBillFile}
+            accept=".xls,.xlsx,.csv"
+            busy={busy === "bill"}
+            onUpload={() =>
+              uploadTo("/import/bills", billFile, setBillResult, "bill")
+            }
+            result={
+              billResult
+                ? `Consumers updated: ${billResult.consumersUpdated} • Bills: ${billResult.billsCreated}`
+                : null
+            }
+          />
         </div>
 
-        {/* Unmatched Areas Fix */}
-        {unmatchedGroups !== null && (
-          <div className="bg-white rounded-2xl shadow-md p-5 space-y-3">
-            <div className="flex items-center justify-between">
-              <p className="font-semibold text-gray-800">
-                Unmatched Areas Fix Karein
-              </p>
+        {masterResult && (
+          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="font-bold text-slate-900">Unmatched Areas</h2>
+                <p className="text-xs text-slate-500">
+                  Group consumers by address and assign an area.
+                </p>
+              </div>
               <button
                 onClick={loadUnmatchedGroups}
-                className="text-xs text-blue-600 hover:underline"
+                disabled={busy === "groups"}
+                className="rounded-xl bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-100"
               >
-                Refresh
+                {busy === "groups" ? "Loading..." : "Check / Fix Areas"}
               </button>
             </div>
-            {unmatchedGroups.length === 0 ? (
-              <p className="text-sm text-green-700">Sab match ho gaye! 🎉</p>
-            ) : (
-              unmatchedGroups.map((g) => (
-                <div
-                  key={g.address}
-                  className="border rounded-lg p-3 space-y-2"
-                >
-                  <p className="text-sm font-medium text-gray-700">
-                    {g.address || "(Khali address)"}{" "}
-                    <span className="text-gray-400 text-xs">
-                      — {g.count} consumers
-                    </span>
-                  </p>
-                  {g.samples?.length > 0 && (
-                    <p className="text-xs text-gray-500">
-                      {g.samples
-                        .map((s) => `${s.name} (${s.consumerId})`)
-                        .join(", ")}
-                      {g.count > g.samples.length ? "..." : ""}
-                    </p>
-                  )}
-                  <div className="flex gap-2">
-                    <select
-                      value={groupAreaChoice[g.address] || ""}
-                      onChange={(e) =>
-                        setGroupAreaChoice((prev) => ({
-                          ...prev,
-                          [g.address]: e.target.value,
-                        }))
-                      }
-                      className="flex-1 border border-gray-300 rounded-lg px-2 py-1.5 text-sm"
+
+            {unmatchedGroups !== null && (
+              <div className="mt-4 space-y-3">
+                {unmatchedGroups.length === 0 ? (
+                  <div className="rounded-xl bg-emerald-50 p-4 text-sm font-semibold text-emerald-700">
+                    All areas are matched. 🎉
+                  </div>
+                ) : (
+                  unmatchedGroups.map((g) => (
+                    <div
+                      key={g.address}
+                      className="rounded-xl border border-slate-200 p-4"
                     >
-                      <option value="">-- Area chunein --</option>
+                      <div className="flex flex-col gap-3 md:flex-row md:items-center">
+                        <div className="min-w-0 flex-1">
+                          <p className="font-semibold text-slate-800">
+                            {g.address || "(Blank address)"}
+                          </p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            {g.count} consumers •{" "}
+                            {g.samples
+                              ?.map((s) => `${s.name} (${s.consumerId})`)
+                              .join(", ")}
+                            {g.count > (g.samples?.length || 0) ? "..." : ""}
+                          </p>
+                        </div>
+                        <div className="flex gap-2">
+                          <select
+                            value={groupAreaChoice[g.address] || ""}
+                            onChange={(e) =>
+                              setGroupAreaChoice((p) => ({
+                                ...p,
+                                [g.address]: e.target.value,
+                              }))
+                            }
+                            className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm"
+                          >
+                            <option value="">-- Choose Area --</option>
+                            {areas.map((a) => (
+                              <option key={a._id} value={a._id}>
+                                {a.name}
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            onClick={() => handleAssignGroup(g.address)}
+                            disabled={!groupAreaChoice[g.address]}
+                            className="rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white disabled:bg-blue-200"
+                          >
+                            Apply
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+          </section>
+        )}
+
+        {pendingConsumers.length > 0 && (
+          <section className="rounded-2xl border border-amber-200 bg-amber-50/60 p-5">
+            <h2 className="font-bold text-amber-900">
+              Consumers not found in master list ({pendingConsumers.length})
+            </h2>
+            <p className="mt-1 text-xs text-amber-700">
+              Check the details and add them.
+            </p>
+            <div className="mt-4 grid gap-4 lg:grid-cols-2">
+              {pendingConsumers.map((c, index) => (
+                <div
+                  key={c.consumerId + index}
+                  className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"
+                >
+                  <p className="mb-3 text-xs font-semibold text-slate-400">
+                    Consumer ID: {c.consumerId}
+                  </p>
+                  <div className="space-y-2">
+                    <input
+                      value={c.name}
+                      onChange={(e) =>
+                        updatePendingField(index, "name", e.target.value)
+                      }
+                      placeholder="Name"
+                      className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                    />
+                    <input
+                      value={c.address}
+                      onChange={(e) =>
+                        updatePendingField(index, "address", e.target.value)
+                      }
+                      placeholder="Address"
+                      className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                    />
+                    <select
+                      value={c.areaId}
+                      onChange={(e) =>
+                        updatePendingField(index, "areaId", e.target.value)
+                      }
+                      className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                    >
+                      <option value="">-- Choose Area --</option>
                       {areas.map((a) => (
                         <option key={a._id} value={a._id}>
                           {a.name}
                         </option>
                       ))}
                     </select>
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        value={c.stbNo}
+                        onChange={(e) =>
+                          updatePendingField(index, "stbNo", e.target.value)
+                        }
+                        placeholder="STB No"
+                        className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                      />
+                      <input
+                        value={c.vcNo}
+                        onChange={(e) =>
+                          updatePendingField(index, "vcNo", e.target.value)
+                        }
+                        placeholder="VC No"
+                        className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                      />
+                    </div>
+                    <input
+                      type="date"
+                      value={c.expiryDate}
+                      onChange={(e) =>
+                        updatePendingField(index, "expiryDate", e.target.value)
+                      }
+                      className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                    />
                     <button
-                      onClick={() => handleAssignGroup(g.address)}
-                      disabled={!groupAreaChoice[g.address]}
-                      className="px-3 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white text-sm rounded-lg"
+                      onClick={() => handleAddPending(index)}
+                      className="w-full rounded-xl bg-emerald-600 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700"
                     >
-                      Apply
+                      Add Consumer
                     </button>
                   </div>
                 </div>
-              ))
-            )}
-          </div>
+              ))}
+            </div>
+          </section>
         )}
 
-        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide pt-2">
-          Monthly Import
-        </p>
-
-        <div className="bg-white rounded-2xl shadow-md p-5">
-          <p className="font-semibold text-gray-800 mb-1">
-            Step 1: Expiry File
-          </p>
-          <input
-            type="file"
-            accept=".xls,.xlsx,.csv"
-            onChange={(e) => setExpiryFile(e.target.files[0])}
-            className="text-sm mb-3 w-full"
-          />
-          <button
-            onClick={() =>
-              uploadTo("/import/expiry", expiryFile, setExpiryResult, "expiry")
-            }
-            disabled={!expiryFile || busy === "expiry"}
-            className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white text-sm font-semibold py-2 rounded-lg"
-          >
-            {busy === "expiry"
-              ? "Upload ho raha hai..."
-              : "Expiry File Upload Karein"}
-          </button>
-          {expiryResult && (
-            <div className="mt-3 text-sm bg-green-50 border border-green-200 rounded-lg p-3 space-y-1">
-              <p>Update hue: {expiryResult.updated}</p>
-              <p className="text-amber-700">
-                Master list me nahi mile:{" "}
-                {expiryResult.unmatchedConsumers?.length || 0}
-              </p>
-            </div>
-          )}
-        </div>
-
-        {pendingConsumers.length > 0 && (
-          <div className="space-y-3">
-            <p className="text-sm font-semibold text-amber-700">
-              Ye {pendingConsumers.length} consumer master list me nahi mile —
-              check karke Add karein:
-            </p>
-            {pendingConsumers.map((c, index) => (
-              <div
-                key={c.consumerId + index}
-                className="bg-white rounded-xl shadow-sm p-4 space-y-2"
-              >
-                <p className="text-xs text-gray-400">
-                  Consumer ID: {c.consumerId}
-                </p>
-                <input
-                  type="text"
-                  value={c.name}
-                  onChange={(e) =>
-                    updatePendingField(index, "name", e.target.value)
-                  }
-                  placeholder="Naam"
-                  className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm"
-                />
-                <input
-                  type="text"
-                  value={c.address}
-                  onChange={(e) =>
-                    updatePendingField(index, "address", e.target.value)
-                  }
-                  placeholder="Address"
-                  className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm"
-                />
-                <select
-                  value={c.areaId}
-                  onChange={(e) =>
-                    updatePendingField(index, "areaId", e.target.value)
-                  }
-                  className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm"
-                >
-                  <option value="">-- Area chunein --</option>
-                  {areas.map((a) => (
-                    <option key={a._id} value={a._id}>
-                      {a.name}
-                    </option>
-                  ))}
-                </select>
-                <div className="grid grid-cols-2 gap-2">
-                  <input
-                    type="text"
-                    value={c.stbNo}
-                    onChange={(e) =>
-                      updatePendingField(index, "stbNo", e.target.value)
-                    }
-                    placeholder="STB No"
-                    className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm"
-                  />
-                  <input
-                    type="text"
-                    value={c.vcNo}
-                    onChange={(e) =>
-                      updatePendingField(index, "vcNo", e.target.value)
-                    }
-                    placeholder="VC No"
-                    className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm"
-                  />
-                </div>
-                <input
-                  type="date"
-                  value={c.expiryDate}
-                  onChange={(e) =>
-                    updatePendingField(index, "expiryDate", e.target.value)
-                  }
-                  className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm"
-                />
-                <button
-                  onClick={() => handleAddPending(index)}
-                  className="w-full bg-green-600 hover:bg-green-700 text-white text-sm font-semibold py-2 rounded-lg"
-                >
-                  Add Karein
-                </button>
-              </div>
-            ))}
+        {billResult?.notFoundConsumers?.length > 0 && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            These Sub.No. were not found:{" "}
+            {billResult.notFoundConsumers.join(", ")}
           </div>
         )}
-
-        <div className="bg-white rounded-2xl shadow-md p-5">
-          <p className="font-semibold text-gray-800 mb-1">Step 2: Bill File</p>
-          <input
-            type="file"
-            accept=".xls,.xlsx,.csv"
-            onChange={(e) => setBillFile(e.target.files[0])}
-            className="text-sm mb-3 w-full"
-          />
-          <button
-            onClick={() =>
-              uploadTo("/import/bills", billFile, setBillResult, "bill")
-            }
-            disabled={!billFile || busy === "bill"}
-            className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white text-sm font-semibold py-2 rounded-lg"
-          >
-            {busy === "bill"
-              ? "Upload ho raha hai..."
-              : "Bill File Upload Karein"}
-          </button>
-          {billResult && (
-            <div className="mt-3 text-sm bg-green-50 border border-green-200 rounded-lg p-3 space-y-1">
-              <p>Consumer update hue: {billResult.consumersUpdated}</p>
-              <p>Bill entries bani/refresh hui: {billResult.billsCreated}</p>
-              {billResult.notFoundConsumers?.length > 0 && (
-                <p className="text-amber-700">
-                  Ye Sub.No. nahi mile:{" "}
-                  {billResult.notFoundConsumers.join(", ")}
-                </p>
-              )}
-            </div>
-          )}
-        </div>
       </div>
     </div>
   );

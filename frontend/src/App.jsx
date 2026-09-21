@@ -18,6 +18,7 @@ import StockReport from "./pages/StockReport";
 import ActivityLog from "./pages/ActivityLog";
 import ProtectedRoute from "./components/ProtectedRoute";
 import AppLayout from "./components/AppLayout";
+import PackagePricing from "./pages/PackagePricing";
 
 function App() {
   return (
@@ -41,6 +42,7 @@ function App() {
         <Route path="/stock-material-add" element={<StockMaterialAdd />} />
         <Route path="/stock-detail" element={<StockDetail />} />
         <Route path="/stock-report" element={<StockReport />} />
+        <Route path="/package-pricing" element={<PackagePricing />} />
         <Route path="/activity-log" element={<ActivityLog />} />
         <Route path="/area/:areaId" element={<Dashboard />} />
         <Route path="/area/:areaId/search" element={<ConsumerSearch />} />

@@ -4,8 +4,7 @@ import api from "../api/axios";
 
 const ForgotPassword = () => {
   const navigate = useNavigate();
-
-  const [step, setStep] = useState(1); // 1 = username, 2 = OTP + new password
+  const [step, setStep] = useState(1);
   const [username, setUsername] = useState("");
   const [otp, setOtp] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -48,114 +47,126 @@ const ForgotPassword = () => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100 px-4">
-      <div className="w-full max-w-sm bg-white rounded-2xl shadow-md p-8">
-        <h1 className="text-2xl font-bold text-center text-gray-800 mb-1">
-          Password Bhool Gaye?
-        </h1>
-        <p className="text-center text-gray-500 mb-6 text-sm">
-          {step === 1
-            ? "Apna username daalein"
-            : "Admin se mila OTP aur naya password daalein"}
-        </p>
+    <div className="min-h-screen bg-slate-50 px-4 py-8">
+      <div className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-md items-center justify-center">
+        <div className="w-full overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-xl shadow-slate-200/60">
+          <div className="bg-gradient-to-br from-blue-600 to-indigo-600 px-7 py-8 text-white">
+            <div className="mb-5 grid h-12 w-12 place-items-center rounded-2xl bg-white/15 text-2xl">
+              🔐
+            </div>
+            <p className="text-xs font-semibold uppercase tracking-widest text-blue-100">
+              Daily Collection
+            </p>
+            <h1 className="mt-1 text-2xl font-bold">Reset your password</h1>
+            <p className="mt-2 text-sm text-blue-100">
+              {step === 1
+                ? "Username enter karke OTP request karein."
+                : "Admin se mila OTP aur naya password enter karein."}
+            </p>
+          </div>
 
-        {step === 1 && (
-          <form onSubmit={handleRequestOtp} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Username
-              </label>
-              <input
-                type="text"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                required
-                autoFocus
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="apna username daaliye"
-              />
+          <div className="p-7">
+            <div className="mb-6 flex items-center gap-2">
+              {[1, 2].map((n) => (
+                <div key={n} className="flex flex-1 items-center gap-2">
+                  <div
+                    className={`grid h-8 w-8 place-items-center rounded-full text-xs font-bold ${step >= n ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-400"}`}
+                  >
+                    {n}
+                  </div>
+                  {n === 1 && (
+                    <div
+                      className={`h-1 flex-1 rounded-full ${step === 2 ? "bg-blue-600" : "bg-slate-100"}`}
+                    />
+                  )}
+                </div>
+              ))}
             </div>
 
-            {error && (
-              <p className="text-red-600 text-sm bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-                {error}
-              </p>
-            )}
-
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white font-semibold py-2.5 rounded-lg transition"
-            >
-              {isSubmitting ? "Bhej rahe hain..." : "OTP Mangwayein"}
-            </button>
-          </form>
-        )}
-
-        {step === 2 && (
-          <form onSubmit={handleResetPassword} className="space-y-4">
             {message && (
-              <p className="text-green-700 text-sm bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+              <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
                 {message}
-              </p>
+              </div>
             )}
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                OTP (admin se maangein)
-              </label>
-              <input
-                type="text"
-                value={otp}
-                onChange={(e) => setOtp(e.target.value)}
-                required
-                maxLength={6}
-                autoFocus
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-center text-lg tracking-widest focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="6-digit OTP"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Naya Password
-              </label>
-              <input
-                type="text"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                required
-                minLength={4}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="naya password likhein"
-              />
-            </div>
-
             {error && (
-              <p className="text-red-600 text-sm bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+              <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
                 {error}
-              </p>
+              </div>
             )}
 
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="w-full bg-green-600 hover:bg-green-700 disabled:bg-green-300 text-white font-semibold py-2.5 rounded-lg transition"
-            >
-              {isSubmitting ? "Reset ho raha hai..." : "Password Reset Karein"}
-            </button>
-          </form>
-        )}
+            {step === 1 ? (
+              <form onSubmit={handleRequestOtp} className="space-y-5">
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700">
+                    Username
+                  </label>
+                  <input
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    required
+                    autoFocus
+                    placeholder="Enter your username"
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-50"
+                  />
+                </div>
+                <button
+                  disabled={isSubmitting}
+                  className="w-full rounded-xl bg-blue-600 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:bg-blue-300"
+                >
+                  {isSubmitting ? "Sending..." : "Request OTP"}
+                </button>
+              </form>
+            ) : (
+              <form onSubmit={handleResetPassword} className="space-y-5">
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700">
+                    6-digit OTP
+                  </label>
+                  <input
+                    value={otp}
+                    onChange={(e) => setOtp(e.target.value)}
+                    required
+                    maxLength={6}
+                    autoFocus
+                    inputMode="numeric"
+                    placeholder="••••••"
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-center text-xl font-bold tracking-[0.5em] outline-none focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-50"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700">
+                    New Password
+                  </label>
+                  <input
+                    type="text"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    required
+                    minLength={4}
+                    placeholder="Enter new password"
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-50"
+                  />
+                </div>
+                <button
+                  disabled={isSubmitting}
+                  className="w-full rounded-xl bg-emerald-600 py-3 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:bg-emerald-300"
+                >
+                  {isSubmitting ? "Resetting..." : "Reset Password"}
+                </button>
+              </form>
+            )}
 
-        <p className="text-center text-sm text-gray-500 mt-6">
-          Yaad aa gaya?{" "}
-          <Link
-            to="/login"
-            className="text-blue-600 font-medium hover:underline"
-          >
-            Login karein
-          </Link>
-        </p>
+            <p className="mt-7 text-center text-sm text-slate-500">
+              Yaad aa gaya?{" "}
+              <Link
+                to="/login"
+                className="font-semibold text-blue-600 hover:underline"
+              >
+                Login karein
+              </Link>
+            </p>
+          </div>
+        </div>
       </div>
     </div>
   );
