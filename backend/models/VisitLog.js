@@ -7,26 +7,52 @@ const visitLogSchema = new mongoose.Schema(
       ref: "Consumer",
       required: true,
     },
+
     visitedBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: true,
     },
+
     purpose: {
       type: String,
       enum: ["collection", "service", "other"],
       default: "collection",
     },
-    serviceNote: { type: String, trim: true, default: "" }, // kisliye gaye the (agar service ho)
+
+    serviceNote: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
     outcome: {
       type: String,
       enum: ["paid", "not_paid", "promised_later"],
       required: true,
     },
-    amountCollected: { type: Number, default: 0 },
-    customerRemark: { type: String, trim: true, default: "" }, // customer ne kya bola
+
+    amountCollected: {
+      type: Number,
+      default: 0,
+    },
+
+    customerRemark: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    // IMPORTANT:
+    // Customer ne jis date ko payment ka promise kiya
+    followUpDate: {
+      type: Date,
+      default: null,
+    },
   },
-  { timestamps: true }, // createdAt hi visit ka exact time/date hai — kabhi edit nahi hota
+  {
+    timestamps: true,
+  },
 );
 
 module.exports = mongoose.model("VisitLog", visitLogSchema);

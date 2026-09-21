@@ -341,6 +341,11 @@ const markUnpaid = async (req, res) => {
 const markDue = async (req, res) => {
   try {
     const { remark, followUpDate } = req.body;
+    if (!followUpDate) {
+      return res.status(400).json({
+        message: "Follow-up date select karein",
+      });
+    }
     const consumer = await Consumer.findById(req.params.id);
     if (!consumer)
       return res.status(404).json({ message: "Consumer nahi mila" });
@@ -374,6 +379,7 @@ const markDue = async (req, res) => {
       purpose: "collection",
       outcome: "promised_later",
       customerRemark: remark || "",
+      followUpDate: followUpDate || null,
     });
 
     await logActivity(
@@ -393,34 +399,110 @@ const markDue = async (req, res) => {
 
 const logVisit = async (req, res) => {
   try {
-    const { purpose, serviceNote, outcome, amountCollected, customerRemark } =
-      req.body;
-    const consumer = await Consumer.findById(req.params.id);
-    if (!consumer)
-      return res.status(404).json({ message: "Consumer nahi mila" });
+    const {
+      purpose,
+      serviceNote,
+      outcome,
+      amountCollected,
+      customerRemark,
+      followUpDate,
+    } = req.body;
 
+    const consumer = await Consumer.findById(req.params.id);
+
+    if (!consumer) {
+      return res.status(404).json({
+        message: "Consumer nahi mila",
+      });
+    }
+
+    // -------------------------------------------------
+    // If customer promised to pay later,
+    // follow-up date is required.
+    // -------------------------------------------------
+    if (outcome === "promised_later" && !followUpDate) {
+      return res.status(400).json({
+        message: "Baad me denge bole hain to follow-up date select karein",
+      });
+    }
+
+    // -------------------------------------------------
+    // Save visit history
+    // -------------------------------------------------
     const visit = await VisitLog.create({
       consumerId: consumer._id,
       visitedBy: req.user._id,
       purpose: purpose || "service",
       serviceNote: serviceNote || "",
       outcome: outcome || "not_paid",
-      amountCollected: amountCollected || 0,
+      amountCollected: Number(amountCollected) || 0,
       customerRemark: customerRemark || "",
+
+      followUpDate: outcome === "promised_later" ? followUpDate : null,
     });
 
-    await logActivity(
-      req.user,
-      "visit_entry",
-      `${consumer.name} (${consumer.consumerId}) — ${purpose}: ${serviceNote || ""}`,
-    );
+    // -------------------------------------------------
+    // PROMISED LATER
+    // Convert current bill into Due + Follow-up
+    // -------------------------------------------------
+    if (outcome === "promised_later" && purpose === "collection") {
+      const month = getCurrentMonth();
 
-    return res.status(201).json(visit);
+      let bill = await MonthlyBill.findOne({
+        consumerId: consumer._id,
+        month,
+      });
+
+      if (!bill) {
+        bill = await MonthlyBill.create({
+          consumerId: consumer._id,
+          month,
+          amount: consumer.monthlyAmount || 0,
+          amountPaid: 0,
+          status: "due",
+          dueRemark: customerRemark || "Payment promised later",
+          followUpDate,
+          lastEditedBy: req.user._id,
+          lastEditedAt: new Date(),
+        });
+      } else {
+        // Keep already collected partial amount.
+        bill.status = "due";
+        bill.dueRemark = customerRemark || "Payment promised later";
+        bill.followUpDate = followUpDate;
+        bill.paidDate = null;
+        bill.lastEditedBy = req.user._id;
+        bill.lastEditedAt = new Date();
+
+        await bill.save();
+      }
+
+      await logActivity(
+        req.user,
+        "promised_payment",
+        `${consumer.name} (${consumer.consumerId}) ne baad me payment ka promise kiya — follow-up ${followUpDate}`,
+      );
+    } else {
+      await logActivity(
+        req.user,
+        "visit_entry",
+        `${consumer.name} (${consumer.consumerId}) — ${
+          purpose || "service"
+        }: ${serviceNote || ""}`,
+      );
+    }
+
+    return res.status(201).json({
+      visit,
+      followUpCreated: outcome === "promised_later" && purpose === "collection",
+    });
   } catch (error) {
     console.error("logVisit error:", error);
-    return res
-      .status(500)
-      .json({ message: "Server error", error: error.message });
+
+    return res.status(500).json({
+      message: "Server error",
+      error: error.message,
+    });
   }
 };
 

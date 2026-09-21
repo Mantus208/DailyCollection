@@ -12,6 +12,8 @@ const reportRoutes = require("./routes/reportRoutes");
 const franchiseeRoutes = require("./routes/franchiseeRoutes");
 const activityLogRoutes = require("./routes/activityLogRoutes");
 const stockRoutes = require("./routes/stockRoutes");
+const packagePriceRoutes = require("./routes/packagePriceRoutes");
+const followUpRoutes = require("./routes/followUpRoutes");
 
 connectDB();
 
@@ -34,11 +36,13 @@ app.use("/api/reports", reportRoutes);
 app.use("/api/franchisees", franchiseeRoutes);
 app.use("/api/activity-log", activityLogRoutes);
 app.use("/api/stock", stockRoutes);
+app.use("/api/package-prices", packagePriceRoutes);
 
 app.use((err, req, res, next) => {
   console.error(err.stack);
   res.status(500).json({ message: "Something went wrong on the server" });
 });
+app.use("/api/follow-ups", followUpRoutes);
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
