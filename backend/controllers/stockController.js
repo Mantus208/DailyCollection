@@ -1,6 +1,8 @@
 const StockItem = require("../models/StockItem");
 const StockPurchase = require("../models/StockPurchase");
 const { logActivity } = require("../utils/logActivity");
+const StockSale = require("../models/StockSale");
+const Consumer = require("../models/Consumer");
 
 const getStockItems = async (req, res) => {
   try {
@@ -13,7 +15,107 @@ const getStockItems = async (req, res) => {
       .json({ message: "Server error", error: error.message });
   }
 };
+const sellStockToConsumer = async (req, res) => {
+  try {
+    const {
+      consumerId,
+      stockItemId,
+      qty,
+      unitPrice,
+      amountPaid = 0,
+      remark = "",
+    } = req.body;
 
+    if (!consumerId || !stockItemId || !qty || unitPrice === undefined) {
+      return res.status(400).json({
+        message: "Consumer, item, quantity aur sale price zaroori hai",
+      });
+    }
+
+    const consumer = await Consumer.findById(consumerId);
+
+    if (!consumer) {
+      return res.status(404).json({
+        message: "Consumer nahi mila",
+      });
+    }
+
+    const item = await StockItem.findById(stockItemId);
+
+    if (!item) {
+      return res.status(404).json({
+        message: "Stock item nahi mila",
+      });
+    }
+
+    const quantity = Number(qty);
+    const price = Number(unitPrice);
+    const paid = Number(amountPaid) || 0;
+
+    if (quantity <= 0) {
+      return res.status(400).json({
+        message: "Quantity valid honi chahiye",
+      });
+    }
+
+    if (price < 0) {
+      return res.status(400).json({
+        message: "Sale price valid hona chahiye",
+      });
+    }
+
+    if (item.currentStock < quantity) {
+      return res.status(400).json({
+        message: `Stock available nahi hai. Current stock: ${item.currentStock}`,
+      });
+    }
+
+    const totalAmount = quantity * price;
+
+    if (paid < 0 || paid > totalAmount) {
+      return res.status(400).json({
+        message: "Paid amount valid hona chahiye",
+      });
+    }
+
+    const balance = totalAmount - paid;
+
+    const sale = await StockSale.create({
+      consumerId,
+      stockItemId,
+      qty: quantity,
+      unitPrice: price,
+      totalAmount,
+      amountPaid: paid,
+      balance,
+      status: balance === 0 ? "paid" : "due",
+      remark: remark.trim(),
+      soldBy: req.user._id,
+    });
+
+    item.currentStock -= quantity;
+    await item.save();
+
+    await logActivity(
+      req.user,
+      "stock_sale",
+      `${quantity} x ${item.name} ${consumer.name} ko becha - ₹${totalAmount}`,
+    );
+
+    return res.status(201).json({
+      sale,
+      item,
+      consumer,
+    });
+  } catch (error) {
+    console.error("sellStockToConsumer error:", error);
+
+    return res.status(500).json({
+      message: "Stock sale nahi hua",
+      error: error.message,
+    });
+  }
+};
 const createStockItem = async (req, res) => {
   try {
     const { name } = req.body;
@@ -82,6 +184,27 @@ const addStockPurchase = async (req, res) => {
 
 const getStockReport = async (req, res) => {
   try {
+    const sales = await StockSale.find()
+      .populate("stockItemId", "name")
+      .populate("consumerId", "name consumerId")
+      .populate("soldBy", "name")
+      .sort({ date: -1 })
+      .limit(100);
+
+    const totalSalesAmount = sales.reduce(
+      (sum, s) => sum + Number(s.totalAmount || 0),
+      0,
+    );
+
+    const totalSalesPaid = sales.reduce(
+      (sum, s) => sum + Number(s.amountPaid || 0),
+      0,
+    );
+
+    const totalSalesDue = sales.reduce(
+      (sum, s) => sum + Number(s.balance || 0),
+      0,
+    );
     const items = await StockItem.find().sort({ name: 1 });
     const purchases = await StockPurchase.find()
       .populate("stockItemId", "name")
@@ -94,7 +217,15 @@ const getStockReport = async (req, res) => {
       0,
     );
 
-    return res.json({ items, purchases, totalPurchaseCost });
+    return res.json({
+      items,
+      purchases,
+      sales,
+      totalPurchaseCost,
+      totalSalesAmount,
+      totalSalesPaid,
+      totalSalesDue,
+    });
   } catch (error) {
     console.error("getStockReport error:", error);
     return res
@@ -107,5 +238,6 @@ module.exports = {
   getStockItems,
   createStockItem,
   addStockPurchase,
+  sellStockToConsumer,
   getStockReport,
 };

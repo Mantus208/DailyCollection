@@ -265,22 +265,28 @@ const Reports = () => {
               </div>
             ) : (
               <div className="divide-y divide-slate-100">
-                {data.map((d) => (
-                  <div
-                    key={d.consumer._id}
-                    className="px-5 py-4 border-l-4 border-red-400 hover:bg-red-50/30"
-                  >
-                    <p className="font-semibold text-slate-900">
-                      {d.consumer.name}
-                    </p>
+                {data.map((d, index) => {
+                  const consumer = d?.consumer || {};
 
-                    <p className="text-xs text-slate-500 mt-1">
-                      {d.consumer.consumerId}
-                    </p>
+                  return (
+                    <div
+                      key={consumer._id || d?._id || `defaulter-${index}`}
+                      className="px-5 py-4 border-l-4 border-red-400 hover:bg-red-50/30"
+                    >
+                      <p className="font-semibold text-slate-900">
+                        {consumer.name || "Unknown Consumer"}
+                      </p>
 
-                    <p className="text-xs text-red-600 mt-2">{d.reason}</p>
-                  </div>
-                ))}
+                      <p className="text-xs text-slate-500 mt-1">
+                        {consumer.consumerId || "-"}
+                      </p>
+
+                      <p className="text-xs text-red-600 mt-2">
+                        {d?.reason || "Payment attention required"}
+                      </p>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>

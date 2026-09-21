@@ -36,7 +36,10 @@ const visitLogSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
-
+    reversed: {
+      type: Boolean,
+      default: false,
+    },
     customerRemark: {
       type: String,
       trim: true,

@@ -18,6 +18,21 @@ const monthlyBillSchema = new mongoose.Schema(
       default: "unpaid",
     },
     paidDate: { type: Date, default: null },
+    baseAmount: {
+      type: Number,
+      default: 0,
+    },
+
+    concessionAmount: {
+      type: Number,
+      default: 0,
+    },
+
+    concessionRemark: {
+      type: String,
+      trim: true,
+      default: "",
+    },
     dueRemark: { type: String, trim: true, default: "" },
     followUpDate: { type: Date, default: null }, // "kab denge bole the" — reminder ke liye
     lastEditedBy: {

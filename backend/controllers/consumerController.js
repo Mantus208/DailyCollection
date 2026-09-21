@@ -204,6 +204,25 @@ const collectPayment = async (req, res) => {
     bill.amountPaid = (bill.amountPaid || 0) + paidNow;
     bill.lastEditedBy = req.user._id;
     bill.lastEditedAt = new Date();
+    // ---------------------------------------------
+    // Reverse latest collection when Paid -> Unpaid
+    // ---------------------------------------------
+    const latestCollection = await VisitLog.findOne({
+      consumerId: id,
+      purpose: "collection",
+      amountCollected: { $gt: 0 },
+      reversed: { $ne: true },
+      outcome: { $in: ["paid", "promised_later"] },
+    }).sort({ createdAt: -1 });
+
+    if (latestCollection) {
+      latestCollection.reversed = true;
+      await latestCollection.save();
+
+      console.log(
+        `Collection reversed: ${latestCollection._id} | ₹${latestCollection.amountCollected}`,
+      );
+    }
 
     if (bill.amount > 0 && bill.amountPaid >= bill.amount) {
       bill.status = "paid";

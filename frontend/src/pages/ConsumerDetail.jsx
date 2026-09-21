@@ -62,6 +62,14 @@ const ConsumerDetail = () => {
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
 
+  const [stockItems, setStockItems] = useState([]);
+  const [stockItemId, setStockItemId] = useState("");
+  const [stockQty, setStockQty] = useState("1");
+  const [stockUnitPrice, setStockUnitPrice] = useState("");
+  const [stockAmountPaid, setStockAmountPaid] = useState("");
+  const [stockRemark, setStockRemark] = useState("");
+  const [stockLoading, setStockLoading] = useState(false);
+
   const load = () => {
     api
       .get(`/consumers/${consumerId}`)
@@ -74,9 +82,25 @@ const ConsumerDetail = () => {
       })
       .catch((err) => setError(err.response?.data?.message || "Load nahi hua"));
   };
+  const loadStockItems = async () => {
+    try {
+      const { data } = await api.get("/stock/items");
 
+      const items = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.items)
+          ? data.items
+          : [];
+
+      setStockItems(items);
+    } catch (err) {
+      console.error("Stock load error:", err);
+      setStockItems([]);
+    }
+  };
   useEffect(() => {
     load();
+    loadStockItems();
   }, [consumerId]);
 
   const handleCollect = async () => {
@@ -94,7 +118,91 @@ const ConsumerDetail = () => {
       setBusy("");
     }
   };
+  const handleStockSale = async () => {
+    setError("");
+    setMessage("");
 
+    const selectedItem = stockItems.find(
+      (item) => String(item._id) === String(stockItemId),
+    );
+
+    if (!selectedItem) {
+      return setError("Stock item select karein.");
+    }
+
+    const qty = Number(stockQty);
+    const unitPrice = Number(stockUnitPrice);
+    const paid = Number(stockAmountPaid || 0);
+    const available = Number(selectedItem.currentStock || 0);
+    const total = qty * unitPrice;
+
+    if (!Number.isFinite(qty) || qty <= 0) {
+      return setError("Quantity sahi enter karein.");
+    }
+
+    if (!Number.isFinite(unitPrice) || unitPrice < 0) {
+      return setError("Selling price sahi enter karein.");
+    }
+
+    if (qty > available) {
+      const msg =
+        `⚠️ Stock Insufficient\n\n` +
+        `Available Stock: ${available}\n` +
+        `Entered Quantity: ${qty}\n\n` +
+        `Sirf ${available} quantity available hai.`;
+
+      setError(msg);
+      alert(msg);
+      return;
+    }
+
+    if (!Number.isFinite(paid) || paid < 0) {
+      return setError("Paid amount sahi enter karein.");
+    }
+
+    if (paid > total) {
+      return setError(
+        `Paid amount ₹${paid} total ₹${total} se zyada nahi ho sakta.`,
+      );
+    }
+
+    setStockLoading(true);
+
+    try {
+      await api.post("/stock/sale", {
+        consumerId,
+        stockItemId,
+        qty,
+        unitPrice,
+        amountPaid: paid,
+        remark: stockRemark.trim(),
+      });
+
+      const balance = total - paid;
+
+      setMessage(
+        balance > 0
+          ? `✅ ${selectedItem.name} sale ho gaya. Pending ₹${balance}`
+          : `✅ ${selectedItem.name} sale successfully ho gaya.`,
+      );
+
+      setStockItemId("");
+      setStockQty("1");
+      setStockUnitPrice("");
+      setStockAmountPaid("");
+      setStockRemark("");
+
+      await loadStockItems();
+    } catch (err) {
+      setError(
+        err.response?.data?.message ||
+          err.response?.data?.error ||
+          "Stock sale nahi hua.",
+      );
+    } finally {
+      setStockLoading(false);
+    }
+  };
   const handleEditAmount = async () => {
     setBusy("editAmount");
     setError("");
@@ -265,6 +373,13 @@ const ConsumerDetail = () => {
   const balance = bill
     ? bill.amount - (bill.amountPaid || 0)
     : consumer.monthlyAmount || 0;
+  const selectedStockItem = stockItems.find(
+    (item) => String(item._id) === String(stockItemId),
+  );
+
+  const stockTotal = Number(stockQty || 0) * Number(stockUnitPrice || 0);
+
+  const stockPending = stockTotal - Number(stockAmountPaid || 0);
 
   return (
     <div className="min-h-screen bg-slate-50 px-4 py-6 md:px-8">
@@ -494,7 +609,184 @@ const ConsumerDetail = () => {
             )}
           </Section>
         </div>
+        {/* STOCK SALE */}
+        <Section
+          title="Sell Stock Item"
+          subtitle="Consumer ko stock material bechein"
+        >
+          <div className="space-y-4">
+            {/* Item */}
+            <div>
+              <label className="mb-1.5 block text-xs font-semibold text-slate-600">
+                Stock Item
+              </label>
 
+              <select
+                value={stockItemId}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setStockItemId(value);
+
+                  const item = stockItems.find(
+                    (x) => String(x._id) === String(value),
+                  );
+
+                  if (item) {
+                    setStockUnitPrice(String(item.lastCostPerUnit || ""));
+                  } else {
+                    setStockUnitPrice("");
+                  }
+                }}
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
+              >
+                <option value="">Select item</option>
+
+                {stockItems.map((item) => (
+                  <option key={item._id} value={item._id}>
+                    {item.name} — Stock: {item.currentStock || 0}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Available stock */}
+            {selectedStockItem && (
+              <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-blue-700">
+                    Available Stock
+                  </span>
+
+                  <span className="text-lg font-bold text-blue-800">
+                    {selectedStockItem.currentStock || 0}
+                  </span>
+                </div>
+
+                <p className="mt-1 text-[11px] text-blue-600">
+                  {selectedStockItem.name}
+                </p>
+              </div>
+            )}
+
+            {/* Stock validation warning */}
+            {selectedStockItem &&
+              Number(stockQty) >
+                Number(selectedStockItem.currentStock || 0) && (
+                <p className="mt-2 text-xs font-bold text-red-600">
+                  ⚠️ Available stock sirf {selectedStockItem.currentStock} hai.
+                  Aap {stockQty} quantity enter kar rahe hain.
+                </p>
+              )}
+
+            {/* Qty + Rate */}
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold text-slate-600">
+                  Quantity
+                </label>
+
+                <input
+                  type="number"
+                  min="1"
+                  max={selectedStockItem?.currentStock ?? undefined}
+                  step="1"
+                  value={stockQty}
+                  onChange={(e) => setStockQty(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold text-slate-600">
+                  Selling Rate / Unit
+                </label>
+
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={stockUnitPrice}
+                  onChange={(e) => setStockUnitPrice(e.target.value)}
+                  placeholder="₹ Rate"
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
+                />
+              </div>
+            </div>
+
+            {/* Amount summary */}
+            <div className="grid grid-cols-3 gap-2">
+              <div className="rounded-xl bg-slate-50 p-3">
+                <p className="text-[11px] text-slate-500">Total</p>
+
+                <p className="mt-1 text-lg font-bold text-slate-900">
+                  ₹{stockTotal}
+                </p>
+              </div>
+
+              <div className="rounded-xl bg-emerald-50 p-3">
+                <p className="text-[11px] text-emerald-600">Paid</p>
+
+                <p className="mt-1 text-lg font-bold text-emerald-700">
+                  ₹{Number(stockAmountPaid || 0)}
+                </p>
+              </div>
+
+              <div
+                className={`rounded-xl p-3 ${
+                  stockPending > 0 ? "bg-amber-50" : "bg-slate-50"
+                }`}
+              >
+                <p className="text-[11px] text-slate-500">Pending</p>
+
+                <p
+                  className={`mt-1 text-lg font-bold ${
+                    stockPending > 0 ? "text-amber-700" : "text-slate-800"
+                  }`}
+                >
+                  ₹{Math.max(stockPending, 0)}
+                </p>
+              </div>
+            </div>
+
+            {/* Paid */}
+            <div>
+              <label className="mb-1.5 block text-xs font-semibold text-slate-600">
+                Amount Received
+              </label>
+
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={stockAmountPaid}
+                onChange={(e) => setStockAmountPaid(e.target.value)}
+                placeholder={`Aaj kitna mila? (Total ₹${stockTotal})`}
+                className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
+              />
+            </div>
+
+            {/* Remark */}
+            <input
+              type="text"
+              value={stockRemark}
+              onChange={(e) => setStockRemark(e.target.value)}
+              placeholder="Remark (optional)"
+              className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
+            />
+
+            {/* Sell button */}
+            <button
+              type="button"
+              onClick={handleStockSale}
+              disabled={
+                stockLoading || !stockItemId || !stockQty || !stockUnitPrice
+              }
+              className="w-full rounded-xl bg-indigo-600 py-3 text-sm font-bold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {stockLoading ? "Selling..." : "Sell Item"}
+            </button>
+          </div>
+        </Section>
         <div className="grid gap-5 lg:grid-cols-2">
           <Section
             title="Service / Visit"

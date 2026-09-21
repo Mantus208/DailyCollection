@@ -25,7 +25,16 @@ const todayStr = () => {
 
   return local.toISOString().slice(0, 10);
 };
+const nextMonthStr = () => {
+  const now = new Date();
 
+  const next = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+
+  return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(
+    2,
+    "0",
+  )}`;
+};
 const isSameMonth = (d) => {
   if (!d) return true;
 
@@ -71,6 +80,12 @@ const formatCurrency = (amount = 0) => {
     maximumFractionDigits: 0,
   }).format(Number(amount) || 0);
 };
+const formatCollectionDate = (value) => {
+  if (!value) return "-";
+
+  const [year, month, day] = value.split("-");
+  return `${day}/${month}/${year}`;
+};
 const getGreeting = () => {
   const hour = new Date().getHours();
 
@@ -115,8 +130,28 @@ const Dashboard = () => {
   const [collectionDate, setCollectionDate] = useState(todayStr());
   const [collectionData, setCollectionData] = useState(null);
 
+  const currentMonthStr = () => {
+    const now = new Date();
+
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(
+      2,
+      "0",
+    )}`;
+  };
+
+  const [cashMonth, setCashMonth] = useState(currentMonthStr());
+
+  const [cashCollectionData, setCashCollectionData] = useState(null);
+  const [showCollectionList, setShowCollectionList] = useState(false);
+
   const [complaints, setComplaints] = useState([]);
   const [reminderTab, setReminderTab] = useState("today");
+  const [billingMonth, setBillingMonth] = useState(() =>
+    todayStr().slice(0, 7),
+  );
+  const [billingSummary, setBillingSummary] = useState(null);
+  const [billingListType, setBillingListType] = useState("");
+  const [showBillingList, setShowBillingList] = useState(false);
 
   const [loading, setLoading] = useState(true);
   const greeting = getGreeting();
@@ -161,19 +196,59 @@ const Dashboard = () => {
           date: collectionDate,
         },
       }),
+      api.get("/reports/billing-summary", {
+        params: {
+          areaId: area._id,
+          month: billingMonth,
+        },
+      }),
+      api.get("/reports/monthly-cash-collection", {
+        params: {
+          areaId: area._id,
+          month: cashMonth,
+        },
+      }),
     ])
-      .then(([followUpData, complaintData, collection]) => {
-        setFollowUps(followUpData.data);
+      .then(
+        ([followUpData, complaintData, collection, billingData, cashData]) => {
+          setFollowUps(followUpData.data);
 
-        setComplaints(complaintData.data);
+          setComplaints(complaintData.data);
 
-        setCollectionData(collection.data);
-      })
+          setCollectionData(collection.data);
+          setBillingSummary(billingData.data);
+          setCashCollectionData(cashData.data);
+        },
+      )
       .finally(() => {
         setLoading(false);
       });
-  }, [area, collectionDate]);
+  }, [area, collectionDate, billingMonth, cashMonth]);
+  const getBillingList = (type) => {
+    if (!billingSummary) return [];
 
+    if (type === "all") {
+      return billingSummary.customers || [];
+    }
+
+    if (type === "paid") {
+      return billingSummary.paidCustomers || [];
+    }
+
+    if (type === "pending") {
+      return billingSummary.pendingCustomers || [];
+    }
+
+    if (type === "not_billed") {
+      return billingSummary.notBilledCustomers || [];
+    }
+
+    if (type === "no_price") {
+      return billingSummary.noPriceCustomers || [];
+    }
+
+    return [];
+  };
   if (!area) return null;
 
   const totalCollection = Number(collectionData?.total || 0);
@@ -234,26 +309,39 @@ const Dashboard = () => {
               <h2 className="text-xl font-bold mt-1">{area.name}</h2>
             </div>
 
-            <Link
-              to="/"
+            <button
+              type="button"
+              onClick={() => {
+                localStorage.removeItem("dc_selected_area");
+                navigate("/");
+              }}
               className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-white/15 hover:bg-white/25 border border-white/20 text-sm font-semibold transition"
             >
               Change Area
               <ArrowUpRight size={16} />
-            </Link>
+            </button>
           </div>
         </div>
 
         {/* STAT CARDS */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-          <StatCard
-            title="Today's Collection"
-            value={`₹${formatCurrency(totalCollection)}`}
-            subtitle={`${consumerCount} consumers`}
-            icon={ReceiptIndianRupee}
-            iconBg="bg-blue-50"
-            iconColor="text-blue-600"
-          />
+          <div
+            onClick={() => {
+              if (collectionData?.visits?.length) {
+                setShowCollectionList(true);
+              }
+            }}
+            className="cursor-pointer"
+          >
+            <StatCard
+              title="Selected Date Collection"
+              value={`₹${formatCurrency(totalCollection)}`}
+              subtitle={`${formatCollectionDate(collectionDate)} • ${consumerCount} consumers • View list`}
+              icon={ReceiptIndianRupee}
+              iconBg="bg-blue-50"
+              iconColor="text-blue-600"
+            />
+          </div>
 
           <StatCard
             title="Due Consumers"
@@ -323,7 +411,170 @@ const Dashboard = () => {
             />
           </div>
         </section>
+        {/* BILLING SUMMARY */}
+        <section className="mb-6">
+          <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
+            <div className="p-5 border-b border-slate-100">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div>
+                  <h2 className="font-bold text-slate-900">Billing Summary</h2>
 
+                  <p className="text-xs text-slate-500 mt-1">
+                    Expected billing and payment status
+                  </p>
+                </div>
+
+                <input
+                  type="month"
+                  value={billingMonth}
+                  onChange={(e) => setBillingMonth(e.target.value)}
+                  className="w-full sm:w-auto rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10"
+                />
+              </div>
+            </div>
+
+            {!billingSummary ? (
+              <div className="p-8 text-center text-sm text-slate-400">
+                Billing summary load ho raha hai...
+              </div>
+            ) : (
+              <>
+                {/* COUNTS */}
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-3 p-5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBillingListType("all");
+                      setShowBillingList(true);
+                    }}
+                    className="text-left rounded-xl border border-slate-200 bg-slate-50 p-4 hover:border-blue-200 hover:bg-blue-50/50 transition"
+                  >
+                    <p className="text-xs text-slate-500">Total Customers</p>
+
+                    <p className="text-2xl font-bold text-slate-900 mt-1">
+                      {billingSummary.totalCustomers}
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBillingListType("paid");
+                      setShowBillingList(true);
+                    }}
+                    className="text-left rounded-xl border border-emerald-100 bg-emerald-50/50 p-4 hover:bg-emerald-50 transition"
+                  >
+                    <p className="text-xs text-emerald-700">Paid</p>
+
+                    <p className="text-2xl font-bold text-emerald-700 mt-1">
+                      {billingSummary.paidCustomersCount}
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBillingListType("pending");
+                      setShowBillingList(true);
+                    }}
+                    className="text-left rounded-xl border border-red-100 bg-red-50/50 p-4 hover:bg-red-50 transition"
+                  >
+                    <p className="text-xs text-red-700">Pending</p>
+
+                    <p className="text-2xl font-bold text-red-700 mt-1">
+                      {billingSummary.pendingCustomersCount}
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBillingListType("not_billed");
+                      setShowBillingList(true);
+                    }}
+                    className="text-left rounded-xl border border-amber-100 bg-amber-50/50 p-4 hover:bg-amber-50 transition"
+                  >
+                    <p className="text-xs text-amber-700">Not Yet Billed</p>
+
+                    <p className="text-2xl font-bold text-amber-700 mt-1">
+                      {billingSummary.notBilledCustomersCount}
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBillingListType("no_price");
+                      setShowBillingList(true);
+                    }}
+                    className="text-left rounded-xl border border-slate-200 bg-slate-50 p-4 hover:bg-slate-100 transition"
+                  >
+                    <p className="text-xs text-slate-500">No Price</p>
+
+                    <p className="text-2xl font-bold text-slate-700 mt-1">
+                      {billingSummary.noPriceCustomersCount}
+                    </p>
+                  </button>
+                </div>
+
+                {/* AMOUNTS */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 px-5 pb-5">
+                  <div className="rounded-xl bg-blue-50 p-4">
+                    <p className="text-xs text-blue-600">Expected Bill</p>
+
+                    <p className="text-xl font-bold text-blue-700 mt-1">
+                      ₹{formatCurrency(billingSummary.expectedBill)}
+                    </p>
+                  </div>
+
+                  <div className="rounded-xl bg-emerald-50 p-4">
+                    <p className="text-xs text-emerald-600">Collected</p>
+
+                    <p className="text-xl font-bold text-emerald-700 mt-1">
+                      ₹{formatCurrency(billingSummary.totalPaid)}
+                    </p>
+                  </div>
+
+                  <div className="rounded-xl bg-red-50 p-4">
+                    <p className="text-xs text-red-600">Pending</p>
+
+                    <p className="text-xl font-bold text-red-700 mt-1">
+                      ₹{formatCurrency(billingSummary.totalPending)}
+                    </p>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </section>
+
+        {/* MONTHLY CASH COLLECTION */}
+        <section className="mb-6">
+          <div className="bg-white border border-slate-200 rounded-2xl p-5 sm:p-6">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-xs font-medium text-slate-500">
+                  Monthly Cash Collection
+                </p>
+
+                <p className="text-2xl font-bold text-slate-900 mt-1">
+                  ₹{formatCurrency(cashCollectionData?.total || 0)}
+                </p>
+
+                <p className="text-xs text-slate-500 mt-1">
+                  {cashCollectionData?.count || 0} collection entries
+                </p>
+              </div>
+
+              <div className="text-sm text-slate-500">
+                {new Date(`${cashMonth}-01`).toLocaleDateString("en-IN", {
+                  month: "long",
+                  year: "numeric",
+                })}
+              </div>
+            </div>
+          </div>
+        </section>
         {/* MAIN GRID */}
         <div className="grid lg:grid-cols-3 gap-6">
           {/* COLLECTION */}
@@ -690,6 +941,186 @@ const Dashboard = () => {
             </div>
           </section>
         </div>
+        {showBillingList && billingSummary && (
+          <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm p-4 flex items-center justify-center">
+            <div className="w-full max-w-3xl max-h-[85vh] bg-white rounded-2xl shadow-2xl overflow-hidden">
+              {/* HEADER */}
+              <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+                <div>
+                  <h3 className="font-bold text-slate-900">
+                    {billingListType === "all"
+                      ? "All Customers"
+                      : billingListType === "paid"
+                        ? "Paid Customers"
+                        : billingListType === "pending"
+                          ? "Pending Customers"
+                          : billingListType === "not_billed"
+                            ? "Not Yet Billed"
+                            : "No Price / Package"}
+                  </h3>
+
+                  <p className="text-xs text-slate-500 mt-1">
+                    {getBillingList(billingListType).length} customers
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowBillingList(false)}
+                  className="w-9 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* LIST */}
+              <div className="p-4 overflow-y-auto max-h-[calc(85vh-80px)]">
+                {getBillingList(billingListType).length === 0 ? (
+                  <div className="py-12 text-center">
+                    <p className="font-semibold text-slate-700">
+                      No customers found
+                    </p>
+
+                    <p className="text-xs text-slate-400 mt-1">
+                      Is category me koi customer nahi hai.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {getBillingList(billingListType).map((c) => (
+                      <Link
+                        key={c.consumerId}
+                        to={`/area/${area._id}/consumer/${c.consumerId}`}
+                        onClick={() => setShowBillingList(false)}
+                        className="flex items-center justify-between gap-4 rounded-xl border border-slate-100 p-3.5 hover:bg-slate-50 transition"
+                      >
+                        <div className="min-w-0">
+                          <p className="font-semibold text-sm text-slate-800 truncate">
+                            {c.name}
+                          </p>
+
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            {c.customerId}
+                          </p>
+
+                          <p className="text-[11px] text-slate-400 mt-1 truncate">
+                            {c.packageName || "No package"}
+                          </p>
+                        </div>
+
+                        <div className="text-right shrink-0">
+                          <p className="font-bold text-sm text-slate-900">
+                            ₹{formatCurrency(c.billAmount)}
+                          </p>
+
+                          {billingListType === "paid" && (
+                            <p className="text-[11px] text-emerald-600">Paid</p>
+                          )}
+
+                          {billingListType === "pending" && (
+                            <p className="text-[11px] text-red-600 font-semibold">
+                              ₹{formatCurrency(c.balance)} pending
+                            </p>
+                          )}
+
+                          {billingListType === "not_billed" && (
+                            <p className="text-[11px] text-amber-600">
+                              Not yet billed
+                            </p>
+                          )}
+
+                          {billingListType === "no_price" && (
+                            <p className="text-[11px] text-slate-500">
+                              Price required
+                            </p>
+                          )}
+                        </div>
+                      </Link>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+        {showCollectionList && collectionData?.visits && (
+          <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm p-4 flex items-center justify-center">
+            <div className="w-full max-w-3xl max-h-[85vh] bg-white rounded-2xl shadow-2xl overflow-hidden">
+              {/* HEADER */}
+              <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+                <div>
+                  <h3 className="font-bold text-slate-900">
+                    Collection Customers
+                  </h3>
+
+                  <p className="text-xs text-slate-500 mt-1">
+                    {formatCollectionDate(collectionDate)} •{" "}
+                    {collectionData.visits.length} customers
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowCollectionList(false)}
+                  className="w-9 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* LIST */}
+              <div className="p-4 overflow-y-auto max-h-[calc(85vh-80px)]">
+                <div className="space-y-2">
+                  {collectionData.visits.map((v) => (
+                    <Link
+                      key={v._id}
+                      to={`/area/${area._id}/consumer/${v.consumerId?._id}`}
+                      onClick={() => setShowCollectionList(false)}
+                      className="flex items-center justify-between gap-4 rounded-xl border border-slate-100 p-3.5 hover:bg-blue-50/50 hover:border-blue-100 transition"
+                    >
+                      {/* LEFT */}
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-10 h-10 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center font-bold text-sm">
+                          {v.consumerId?.name?.charAt(0)?.toUpperCase() || "C"}
+                        </div>
+
+                        <div className="min-w-0">
+                          <p className="font-semibold text-sm text-slate-800 truncate">
+                            {v.consumerId?.name || "Unknown Consumer"}
+                          </p>
+
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            {v.consumerId?.consumerId || "-"}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* RIGHT */}
+                      <div className="text-right shrink-0">
+                        <p className="font-bold text-sm text-emerald-600">
+                          ₹{formatCurrency(v.amountCollected)}
+                        </p>
+
+                        <p className="text-[11px] text-slate-400">Collected</p>
+                      </div>
+                    </Link>
+                  ))}
+                </div>
+
+                {/* TOTAL */}
+                <div className="mt-4 pt-4 border-t border-slate-100 flex items-center justify-between">
+                  <span className="text-sm font-semibold text-slate-600">
+                    Total Collection
+                  </span>
+
+                  <span className="text-lg font-bold text-slate-900">
+                    ₹{formatCurrency(collectionData.total)}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );
