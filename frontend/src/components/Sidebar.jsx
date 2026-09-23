@@ -1,5 +1,5 @@
 import { useState, useContext } from "react";
-import { NavLink, useNavigate } from "react-router-dom";
+import { NavLink, useNavigate, useLocation } from "react-router-dom";
 import { AuthContext } from "../context/AuthContext";
 
 import {
@@ -23,6 +23,8 @@ const Sidebar = () => {
   const { user, logout } = useContext(AuthContext);
   const navigate = useNavigate();
 
+  const location = useLocation();
+
   const [open, setOpen] = useState(false);
 
   const storedArea = localStorage.getItem("dc_selected_area");
@@ -44,7 +46,7 @@ const Sidebar = () => {
         {
           label: "Dashboard",
           icon: LayoutDashboard,
-          to: areaId ? `/area/${areaId}` : "/",
+          to: areaId ? `/area/${areaId}` : null,
         },
         {
           label: "Change Area",
@@ -61,7 +63,7 @@ const Sidebar = () => {
             {
               label: "Collection Entry",
               icon: ReceiptIndianRupee,
-              to: `/area/${areaId}/search`,
+              to: `/area/${areaId}/collection`,
             },
             {
               label: "Complaints",
@@ -258,28 +260,44 @@ const Sidebar = () => {
               <div className="space-y-1">
                 {group.items.map((item) => {
                   const Icon = item.icon;
-
+                  if (item.label === "Dashboard" && !areaId) {
+                    return (
+                      <div
+                        key={item.label}
+                        className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-slate-300 cursor-not-allowed"
+                      >
+                        <LayoutDashboard size={18} className="text-slate-300" />
+                        <span className="font-medium">Dashboard</span>
+                      </div>
+                    );
+                  }
                   // Change Area
                   if (item.action) {
                     return (
                       <button
                         key={item.label}
                         onClick={item.action}
-                        className="
-          group w-full flex items-center gap-3
-          px-3 py-2.5
-          rounded-xl
-          text-sm
-          text-slate-600
-          hover:bg-slate-100
-          hover:text-slate-900
-          transition-all
-          text-left
-        "
+                        className={`
+                                  group w-full flex items-center gap-3
+                                  px-3 py-2.5
+                                  rounded-xl
+                                  text-sm
+                                  transition-all
+                                  text-left
+                                  ${
+                                    !areaId && location.pathname === "/"
+                                      ? "bg-blue-600 text-white shadow-md shadow-blue-600/20"
+                                      : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                                  }
+                                `}
                       >
                         <Icon
                           size={18}
-                          className="text-slate-400 group-hover:text-slate-700"
+                          className={
+                            !areaId && location.pathname === "/"
+                              ? "text-white"
+                              : "text-slate-400 group-hover:text-slate-700"
+                          }
                         />
 
                         <span className="font-medium">{item.label}</span>
@@ -288,40 +306,67 @@ const Sidebar = () => {
                   }
 
                   // Normal navigation
+                  const collectionActive =
+                    item.label === "Collection Entry" &&
+                    Boolean(areaId) &&
+                    (location.pathname === `/area/${areaId}/collection` ||
+                      location.pathname.startsWith(
+                        `/area/${areaId}/consumer/`,
+                      ));
+
+                  const getItemActive = (routerIsActive) => {
+                    if (item.label === "Dashboard") {
+                      return Boolean(areaId) && routerIsActive;
+                    }
+
+                    if (item.label === "Collection Entry") {
+                      return collectionActive;
+                    }
+
+                    return routerIsActive;
+                  };
+
                   return (
                     <NavLink
                       key={item.label}
                       to={item.to}
+                      end={item.label === "Dashboard"}
                       onClick={close}
-                      className={({ isActive }) =>
-                        `
+                      className={({ isActive }) => {
+                        const active = getItemActive(isActive);
+
+                        return `
         group flex items-center gap-3
         px-3 py-2.5
         rounded-xl
         text-sm
         transition-all
         ${
-          isActive
+          active
             ? "bg-blue-600 text-white shadow-md shadow-blue-600/20"
             : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
         }
-        `
-                      }
+      `;
+                      }}
                     >
-                      {({ isActive }) => (
-                        <>
-                          <Icon
-                            size={18}
-                            className={
-                              isActive
-                                ? "text-white"
-                                : "text-slate-400 group-hover:text-slate-700"
-                            }
-                          />
+                      {({ isActive }) => {
+                        const active = getItemActive(isActive);
 
-                          <span className="font-medium">{item.label}</span>
-                        </>
-                      )}
+                        return (
+                          <>
+                            <Icon
+                              size={18}
+                              className={
+                                active
+                                  ? "text-white"
+                                  : "text-slate-400 group-hover:text-slate-700"
+                              }
+                            />
+
+                            <span className="font-medium">{item.label}</span>
+                          </>
+                        );
+                      }}
                     </NavLink>
                   );
                 })}

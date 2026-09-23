@@ -55,22 +55,29 @@ const ConsumerSearch = () => {
 
   // Load selected area
   useEffect(() => {
-    const stored = localStorage.getItem("dc_selected_area");
-
-    if (stored) {
+    const validateAreaAccess = async () => {
       try {
-        const parsed = JSON.parse(stored);
+        const { data: areas } = await api.get("/areas");
 
-        if (parsed._id === areaId) {
-          setArea(parsed);
+        const allowedArea = areas.find((a) => String(a._id) === String(areaId));
+
+        if (!allowedArea) {
+          localStorage.removeItem("dc_selected_area");
+          navigate("/", { replace: true });
           return;
         }
-      } catch (error) {
-        console.error("Invalid selected area:", error);
-      }
-    }
 
-    navigate("/");
+        localStorage.setItem("dc_selected_area", JSON.stringify(allowedArea));
+
+        setArea(allowedArea);
+      } catch (error) {
+        console.error("Area access validation error:", error);
+        localStorage.removeItem("dc_selected_area");
+        navigate("/", { replace: true });
+      }
+    };
+
+    validateAreaAccess();
   }, [areaId, navigate]);
 
   // Search consumers

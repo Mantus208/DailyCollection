@@ -26,6 +26,16 @@ const consumerSchema = new mongoose.Schema(
     franchisee: { type: String, trim: true, default: "" },
     lastPackageDate: { type: Date, default: null }, // Bill file se set hota hai
     monthlyAmount: { type: Number, default: 0 }, // Package Pricing Master se final effective price
+    previousDue: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    advanceAmount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
     status: { type: String, enum: ["active", "inactive"], default: "active" },
   },
   { timestamps: true },

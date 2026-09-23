@@ -157,18 +157,29 @@ const Dashboard = () => {
   const greeting = getGreeting();
 
   useEffect(() => {
-    const stored = localStorage.getItem("dc_selected_area");
+    const validateAreaAccess = async () => {
+      try {
+        const { data: areas } = await api.get("/areas");
 
-    if (stored) {
-      const parsed = JSON.parse(stored);
+        const allowedArea = areas.find((a) => String(a._id) === String(areaId));
 
-      if (parsed._id === areaId) {
-        setArea(parsed);
-        return;
+        if (!allowedArea) {
+          localStorage.removeItem("dc_selected_area");
+          navigate("/", { replace: true });
+          return;
+        }
+
+        localStorage.setItem("dc_selected_area", JSON.stringify(allowedArea));
+
+        setArea(allowedArea);
+      } catch (error) {
+        console.error("Area access validation error:", error);
+        localStorage.removeItem("dc_selected_area");
+        navigate("/", { replace: true });
       }
-    }
+    };
 
-    navigate("/");
+    validateAreaAccess();
   }, [areaId, navigate]);
 
   useEffect(() => {
@@ -383,7 +394,7 @@ const Dashboard = () => {
 
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             <QuickAction
-              to={`/area/${area._id}/search`}
+              to={`/area/${area._id}/collection`}
               icon={Search}
               title="Collection Entry"
               subtitle="Search consumer"

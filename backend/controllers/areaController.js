@@ -21,13 +21,33 @@ const getAreas = async (req, res) => {
 const getAreaById = async (req, res) => {
   try {
     const area = await Area.findById(req.params.id);
-    if (!area) return res.status(404).json({ message: "Area nahi mila" });
+
+    if (!area) {
+      return res.status(404).json({
+        message: "Area nahi mila",
+      });
+    }
+
+    if (req.user.role !== "admin") {
+      const hasAccess = (req.user.assignedAreas || []).some(
+        (id) => String(id) === String(area._id),
+      );
+
+      if (!hasAccess) {
+        return res.status(403).json({
+          message: "Aapko is area ka access nahi hai",
+        });
+      }
+    }
+
     return res.json(area);
   } catch (error) {
     console.error("getAreaById error:", error);
-    return res
-      .status(500)
-      .json({ message: "Server error", error: error.message });
+
+    return res.status(500).json({
+      message: "Server error",
+      error: error.message,
+    });
   }
 };
 

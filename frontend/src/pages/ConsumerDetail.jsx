@@ -39,6 +39,9 @@ const Section = ({ title, subtitle, children, action }) => (
 
 const ConsumerDetail = () => {
   const { areaId, consumerId } = useParams();
+
+  const storedArea = localStorage.getItem("dc_selected_area");
+  const area = storedArea ? JSON.parse(storedArea) : null;
   const navigate = useNavigate();
 
   const [consumer, setConsumer] = useState(null);
@@ -46,6 +49,9 @@ const ConsumerDetail = () => {
   const [concessionRemark, setConcessionRemark] = useState("");
   const [showConcessionForm, setShowConcessionForm] = useState(false);
   const [showStock, setShowStock] = useState(false);
+
+  const [actionDrawer, setActionDrawer] = useState(null);
+
   const [error, setError] = useState("");
   const [amountPaid, setAmountPaid] = useState("");
   const [editingAmount, setEditingAmount] = useState(false);
@@ -65,6 +71,11 @@ const ConsumerDetail = () => {
   const [history, setHistory] = useState(null);
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
+  const [previousDue, setPreviousDue] = useState("");
+
+  const [consumerSearch, setConsumerSearch] = useState("");
+  const [consumerResults, setConsumerResults] = useState([]);
+  const [consumerListLoading, setConsumerListLoading] = useState(false);
 
   const [stockItems, setStockItems] = useState([]);
   const [stockItemId, setStockItemId] = useState("");
@@ -86,6 +97,7 @@ const ConsumerDetail = () => {
       })
       .catch((err) => setError(err.response?.data?.message || "Load nahi hua"));
   };
+
   const loadStockItems = async () => {
     try {
       const { data } = await api.get("/stock/items");
@@ -106,18 +118,140 @@ const ConsumerDetail = () => {
     load();
     loadStockItems();
   }, [consumerId]);
+  useEffect(() => {
+    const timer = setTimeout(async () => {
+      try {
+        setConsumerListLoading(true);
 
+        const { data } = await api.get("/consumers/search", {
+          params: {
+            areaId,
+            q: consumerSearch,
+          },
+        });
+
+        setConsumerResults(Array.isArray(data) ? data : []);
+      } catch (err) {
+        console.error("Consumer list load error:", err);
+        setConsumerResults([]);
+      } finally {
+        setConsumerListLoading(false);
+      }
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [areaId, consumerSearch]);
   const handleCollect = async () => {
+    const paidAmount = Number(amountPaid);
+
+    if (!Number.isFinite(paidAmount) || paidAmount <= 0) {
+      setError("Valid amount enter karein.");
+      return;
+    }
+
     setBusy("collect");
     setError("");
+    setMessage("");
+
     try {
-      await api.put(`/consumers/${consumerId}/collect`, {
-        amountPaid: amountPaid || 0,
+      const { data } = await api.put(`/consumers/${consumerId}/collect`, {
+        amountPaid: paidAmount,
       });
+
+      console.log("COLLECTION RESPONSE:", data);
+
       setAmountPaid("");
-      load();
+      setConcessionAmount("");
+      setConcessionRemark("");
+      setShowConcessionForm(false);
+
+      // IMPORTANT: database se fresh data
+      await load();
+
+      setActionDrawer(null);
+
+      setMessage(
+        isPaid
+          ? `₹${paidAmount} advance receive ho gaya.`
+          : `₹${paidAmount} collection receive ho gaya.`,
+      );
     } catch (err) {
-      setError(err.response?.data?.message || "Collect nahi hua");
+      setError(err.response?.data?.message || "Collection save nahi hua");
+    } finally {
+      setBusy("");
+    }
+  };
+  const handleAdvance = async () => {
+    const advance = Number(amountPaid);
+
+    if (!Number.isFinite(advance) || advance <= 0) {
+      setError("Valid advance amount enter karein.");
+      return;
+    }
+
+    setBusy("advance");
+    setError("");
+    setMessage("");
+
+    try {
+      const { data } = await api.put(`/consumers/${consumerId}/advance`, {
+        amount: advance,
+      });
+
+      console.log("ADVANCE RESPONSE:", data);
+
+      // Screen par immediately latest advance dikhaye
+      setConsumer((prev) => ({
+        ...prev,
+        advanceAmount: Number(data.advanceAmount || 0),
+      }));
+
+      setAmountPaid("");
+
+      setActionDrawer(null);
+
+      setMessage(`₹${advance} advance successfully save ho gaya.`);
+
+      // Database se fresh consumer data
+      await load();
+      console.log("ADVANCE SENT:", advance);
+      console.log("ADVANCE RESPONSE:", data);
+      console.log("SERVER ADVANCE:", data.advanceAmount);
+    } catch (err) {
+      setError(err.response?.data?.message || "Advance payment save nahi hua");
+    } finally {
+      setBusy("");
+    }
+  };
+  const handleSetPreviousDue = async () => {
+    const current = Number(consumer?.previousDue || 0);
+
+    const value = window.prompt(
+      "Previous Due amount enter karein:",
+      String(current),
+    );
+
+    if (value === null) {
+      return;
+    }
+
+    const amount = Number(value);
+
+    if (!Number.isFinite(amount) || amount < 0) {
+      alert("Valid amount enter karein.");
+      return;
+    }
+
+    try {
+      setBusy("previousDue");
+
+      await api.put(`/consumers/${consumerId}/previous-due`, {
+        previousDue: amount,
+      });
+
+      await load();
+    } catch (err) {
+      setError(err.response?.data?.message || "Previous due save nahi hua");
     } finally {
       setBusy("");
     }
@@ -137,6 +271,7 @@ const ConsumerDetail = () => {
       setShowConcessionForm(false);
 
       await load();
+      setActionDrawer(null);
     } catch (err) {
       setError(err.response?.data?.message || "Concession apply nahi hua");
     } finally {
@@ -218,6 +353,7 @@ const ConsumerDetail = () => {
       setStockRemark("");
       setShowStock(false);
       await loadStockItems();
+      setActionDrawer(null);
     } catch (err) {
       setError(
         err.response?.data?.message ||
@@ -284,6 +420,7 @@ const ConsumerDetail = () => {
       setDueRemark("");
       setShowDueForm(false);
       load();
+      setActionDrawer(null);
     } catch (err) {
       setError(err.response?.data?.message || "Nahi ho paya");
     } finally {
@@ -341,6 +478,7 @@ const ConsumerDetail = () => {
       }
 
       load();
+      setActionDrawer(null);
     } catch (err) {
       const msg = err.response?.data?.message || "Save nahi hua";
 
@@ -361,6 +499,7 @@ const ConsumerDetail = () => {
       setComplaintText("");
       setShowComplaintForm(false);
       setMessage("Complaint darj ho gayi");
+      setActionDrawer(null);
     } catch (err) {
       setError(err.response?.data?.message || "Complaint darj nahi hui");
     } finally {
@@ -394,250 +533,818 @@ const ConsumerDetail = () => {
   }
 
   const bill = consumer.currentBill;
-  const isPaid = bill?.status === "paid";
-  const balance = bill
-    ? bill.amount - (bill.amountPaid || 0)
-    : consumer.monthlyAmount || 0;
+
+  const currentBillAmount = Number(bill?.amount ?? consumer.monthlyAmount ?? 0);
+
+  const currentBillPaid = Number(bill?.amountPaid ?? 0);
+
+  const currentBillConcession = Number(bill?.concessionAmount ?? 0);
+
+  const currentBalance = Math.max(currentBillAmount - currentBillPaid, 0);
+
+  const manualPreviousDue = Number(consumer?.previousDue ?? 0);
+
+  const advanceAmount = Number(consumer?.advanceAmount ?? 0);
+
+  const totalOutstanding = Math.max(
+    manualPreviousDue + currentBalance - advanceAmount,
+    0,
+  );
+
+  /*
+   * IMPORTANT:
+   * bill null + amount 0 ko Paid nahi maana jayega.
+   */
+  const isPaid =
+    Boolean(bill) && currentBillAmount > 0 && totalOutstanding <= 0;
+
+  // Existing code compatibility
+  const balance = totalOutstanding;
+
   const selectedStockItem = stockItems.find(
     (item) => String(item._id) === String(stockItemId),
   );
 
   const stockTotal = Number(stockQty || 0) * Number(stockUnitPrice || 0);
 
-  const stockPending = stockTotal - Number(stockAmountPaid || 0);
+  const stockPending = Math.max(stockTotal - Number(stockAmountPaid || 0), 0);
 
   return (
-    <div className="min-h-screen bg-slate-50 px-4 py-6 md:px-8">
-      <div className="mx-auto max-w-6xl space-y-5">
-        <button
-          onClick={() => navigate(`/area/${areaId}/search`)}
-          className="text-sm font-semibold text-blue-600 hover:underline"
-        >
-          ← Back to Consumer Search
-        </button>
+    <div className="min-h-screen bg-[#f5f7fb]">
+      <div className="mx-auto grid min-h-screen max-w-[1500px] lg:grid-cols-[300px_minmax(0,1fr)]">
+        {/* =========================================================
+          LEFT CONSUMER LIST - DESKTOP
+      ========================================================== */}
+        <aside className="sticky top-0 hidden h-screen border-r border-slate-200 bg-white lg:block">
+          <div className="flex h-full flex-col">
+            {/* Header */}
+            <div className="border-b border-slate-200 px-4 py-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-[15px] font-bold text-slate-900">
+                    Consumers
+                  </h2>
 
-        {message && (
-          <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
-            {message}
-          </div>
-        )}
-        {error && (
-          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {error}
-          </div>
-        )}
+                  <p className="mt-0.5 text-[10px] text-slate-400">
+                    Current Area
+                    {area?.name && (
+                      <span className="ml-1 font-semibold text-blue-600">
+                        {area.name}
+                      </span>
+                    )}
+                  </p>
+                </div>
 
-        <div className="overflow-hidden rounded-3xl bg-gradient-to-br from-blue-600 to-indigo-600 p-6 text-white shadow-lg">
-          <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-widest text-blue-100">
-                Consumer Profile
-              </p>
-              <h1 className="mt-1 text-3xl font-bold">{consumer.name}</h1>
-              <p className="mt-1 text-sm text-blue-100">
-                Consumer ID: {consumer.consumerId}
-              </p>
-            </div>
-            <div
-              className={`rounded-2xl px-4 py-3 text-center ${isPaid ? "bg-emerald-500/20" : "bg-white/10"}`}
-            >
-              <p className="text-xs text-blue-100">Current Status</p>
-              <p className="mt-1 text-lg font-bold">
-                {isPaid ? "PAID" : bill?.status?.toUpperCase() || "PENDING"}
-              </p>
-            </div>
-          </div>
-        </div>
+                <span className="rounded-full bg-blue-50 px-2.5 py-1 text-[10px] font-bold text-blue-700">
+                  {consumerResults.length}
+                </span>
+              </div>
 
-        <div className="grid gap-5 lg:grid-cols-[1.15fr_.85fr]">
-          <Section
-            title="Consumer Information"
-            subtitle="Account and connection details"
-          >
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="Address" value={consumer.address} />
-              <Field label="Mobile" value={consumer.mobile} />
-              <Field label="STB No" value={consumer.stbNo} />
-              <Field label="VC No" value={consumer.vcNo} />
-              <Field
-                label="Last Package"
-                value={formatDate(consumer.lastPackageDate)}
-              />
-              <Field label="Expiry" value={formatDate(consumer.expiryDate)} />
-            </div>
-          </Section>
-
-          <Section
-            title="Monthly Collection"
-            subtitle="Current bill and payment status"
-            action={
-              !editingAmount ? (
-                <button
-                  onClick={() => {
-                    setEditingAmount(true);
-                    setNewAmount(
-                      String(bill?.amount ?? consumer.monthlyAmount ?? 0),
-                    );
-                  }}
-                  className="rounded-lg bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700"
-                >
-                  Edit Amount
-                </button>
-              ) : null
-            }
-          >
-            {editingAmount && (
-              <div className="mb-4 flex gap-2">
+              <div className="mt-3">
                 <input
-                  type="number"
-                  value={newAmount}
-                  onChange={(e) => setNewAmount(e.target.value)}
-                  className="min-w-0 flex-1 rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                  type="text"
+                  value={consumerSearch}
+                  onChange={(e) => setConsumerSearch(e.target.value)}
+                  placeholder="Search consumer..."
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm outline-none transition focus:border-blue-500 focus:bg-white"
                 />
+              </div>
+            </div>
+
+            {/* Consumer List */}
+            <div className="flex-1 overflow-y-auto">
+              {consumerListLoading ? (
+                <div className="px-4 py-8 text-center text-xs text-slate-400">
+                  Loading...
+                </div>
+              ) : consumerResults.length === 0 ? (
+                <div className="px-4 py-10 text-center">
+                  <p className="text-sm font-semibold text-slate-500">
+                    No consumer found
+                  </p>
+
+                  <p className="mt-1 text-[11px] text-slate-400">
+                    Search by name, ID or mobile
+                  </p>
+                </div>
+              ) : (
+                consumerResults.map((c) => {
+                  const cBill = c.currentBill;
+
+                  const cAmount = Number(cBill?.amount ?? c.monthlyAmount ?? 0);
+
+                  const cPaid = Number(cBill?.amountPaid ?? 0);
+
+                  const cPrevious = Number(c.previousDue ?? 0);
+
+                  const cAdvance = Number(c.advanceAmount ?? 0);
+
+                  const cDue = Math.max(
+                    cPrevious + Math.max(cAmount - cPaid, 0) - cAdvance,
+                    0,
+                  );
+
+                  const selected = String(c._id) === String(consumer?._id);
+
+                  return (
+                    <button
+                      key={c._id}
+                      type="button"
+                      onClick={() =>
+                        navigate(`/area/${areaId}/consumer/${c._id}`)
+                      }
+                      className={`w-full border-b border-slate-100 px-4 py-3 text-left transition ${
+                        selected ? "bg-blue-50" : "hover:bg-slate-50"
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div
+                          className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-bold ${
+                            selected
+                              ? "bg-blue-600 text-white"
+                              : "bg-slate-100 text-slate-600"
+                          }`}
+                        >
+                          {(c.name || "?").charAt(0).toUpperCase()}
+                        </div>
+
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="truncate text-[13px] font-semibold text-slate-800">
+                              {c.name}
+                            </p>
+
+                            {cDue > 0 ? (
+                              <span className="shrink-0 text-[11px] font-bold text-amber-600">
+                                ₹{cDue}
+                              </span>
+                            ) : (
+                              <span className="shrink-0 text-[10px] font-bold text-emerald-600">
+                                PAID
+                              </span>
+                            )}
+                          </div>
+
+                          <p className="mt-0.5 truncate text-[10px] text-slate-400">
+                            {c.consumerId || "-"}
+                          </p>
+                        </div>
+
+                        <span className="text-slate-300">›</span>
+                      </div>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </aside>
+
+        {/* =========================================================
+          RIGHT CUSTOMER PANEL
+      ========================================================== */}
+        <main className="relative min-w-0 bg-[#f5f7fb]">
+          {/* =======================================================
+            CUSTOMER HEADER
+        ======================================================== */}
+          <div className="sticky top-0 z-30 border-b border-slate-200 bg-white">
+            <div className="flex items-center justify-between px-4 py-3 md:px-6">
+              <div className="flex min-w-0 items-center gap-3">
                 <button
-                  onClick={handleEditAmount}
-                  disabled={busy === "editAmount"}
-                  className="rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white"
+                  type="button"
+                  onClick={() => navigate(`/area/${areaId}/search`)}
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-600 lg:hidden"
                 >
-                  Save
+                  ←
                 </button>
+
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-600 text-sm font-bold text-white">
+                  {(consumer.name || "?").charAt(0).toUpperCase()}
+                </div>
+
+                <div className="min-w-0">
+                  <h1 className="truncate text-base font-bold text-slate-900">
+                    {consumer.name}
+                  </h1>
+
+                  <p className="truncate text-[11px] text-slate-400">
+                    {consumer.consumerId}
+                    {consumer.mobile ? ` • ${consumer.mobile}` : ""}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {consumer.mobile && consumer.mobile !== "-" && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      (window.location.href = `tel:${consumer.mobile}`)
+                    }
+                    className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 text-sm"
+                  >
+                    📞
+                  </button>
+                )}
+
                 <button
-                  onClick={() => setEditingAmount(false)}
-                  className="rounded-xl px-3 text-sm text-slate-500"
+                  type="button"
+                  onClick={() => setActionDrawer("more")}
+                  className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 text-lg text-slate-600"
                 >
-                  Cancel
+                  ⋮
                 </button>
+
+                <div className="text-right">
+                  <p
+                    className={`text-sm font-extrabold ${
+                      totalOutstanding > 0
+                        ? "text-amber-600"
+                        : "text-emerald-600"
+                    }`}
+                  >
+                    ₹{totalOutstanding}
+                  </p>
+
+                  <p
+                    className={`text-[9px] font-bold uppercase tracking-wide ${
+                      totalOutstanding > 0
+                        ? "text-amber-600"
+                        : "text-emerald-600"
+                    }`}
+                  >
+                    {totalOutstanding > 0 ? "Due" : "Paid"}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* =====================================================
+    CLEAN BALANCE
+====================================================== */}
+            <div className="border-t border-slate-100 bg-white">
+              <div className="flex flex-col gap-3 px-4 py-3 md:flex-row md:items-center md:justify-between md:px-6">
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                    Total Outstanding
+                  </p>
+
+                  <div className="mt-0.5 flex items-baseline gap-2">
+                    <p
+                      className={`text-2xl font-extrabold ${
+                        totalOutstanding > 0
+                          ? "text-amber-600"
+                          : "text-emerald-600"
+                      }`}
+                    >
+                      ₹{totalOutstanding}
+                    </p>
+
+                    <span
+                      className={`text-[10px] font-semibold ${
+                        totalOutstanding > 0
+                          ? "text-amber-600"
+                          : "text-emerald-600"
+                      }`}
+                    >
+                      {totalOutstanding > 0 ? "Amount Due" : "Account Clear"}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs">
+                  <div>
+                    <span className="text-slate-400">Bill</span>
+                    <span className="ml-1.5 font-bold text-slate-800">
+                      ₹{currentBillAmount}
+                    </span>
+                  </div>
+
+                  <div>
+                    <span className="text-slate-400">Paid</span>
+                    <span className="ml-1.5 font-bold text-emerald-600">
+                      ₹{currentBillPaid}
+                    </span>
+                  </div>
+
+                  {manualPreviousDue > 0 && (
+                    <div>
+                      <span className="text-slate-400">Previous</span>
+                      <span className="ml-1.5 font-bold text-blue-600">
+                        ₹{manualPreviousDue}
+                      </span>
+                    </div>
+                  )}
+
+                  {advanceAmount > 0 && (
+                    <div>
+                      <span className="text-slate-400">Advance</span>
+                      <span className="ml-1.5 font-bold text-indigo-600">
+                        ₹{advanceAmount}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* =======================================================
+            CLEAN LEDGER
+        ======================================================== */}
+          <div className="px-3 py-4 pb-24 md:px-6 md:py-5">
+            {message && (
+              <div className="mb-3 rounded-xl bg-emerald-50 px-4 py-3 text-xs font-semibold text-emerald-700">
+                {message}
               </div>
             )}
 
-            <div className="mb-4 grid grid-cols-2 gap-3">
-              <div className="rounded-2xl bg-slate-50 p-4">
-                <p className="text-xs text-slate-500">Package Amount</p>
-                <p className="mt-1 text-2xl font-bold text-slate-900">
-                  ₹{bill?.amount ?? consumer.monthlyAmount ?? 0}
-                </p>
+            {error && (
+              <div className="mb-3 whitespace-pre-line rounded-xl bg-red-50 px-4 py-3 text-xs font-semibold text-red-700">
+                {error}
               </div>
-              <div
-                className={`rounded-2xl p-4 ${isPaid ? "bg-emerald-50" : "bg-amber-50"}`}
-              >
-                <p className="text-xs text-slate-500">Balance</p>
-                <p
-                  className={`mt-1 text-2xl font-bold ${isPaid ? "text-emerald-700" : "text-amber-700"}`}
-                >
-                  ₹{isPaid ? 0 : balance}
-                </p>
-              </div>
-            </div>
+            )}
 
-            {isPaid ? (
-              <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
-                <p className="font-bold text-emerald-700">
-                  ✓ Paid — ₹{bill.amount}
-                </p>
-                <p className="mt-1 text-xs text-emerald-600">
-                  {formatDate(bill.paidDate)}
-                </p>
-                <button
-                  onClick={handleUnpaid}
-                  disabled={busy === "unpaid"}
-                  className="mt-3 rounded-xl border border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-600"
-                >
-                  Mark Unpaid
-                </button>
+            <div className="mx-auto max-w-4xl">
+              {/* Today */}
+              <div className="mb-4 flex items-center gap-3">
+                <div className="h-px flex-1 bg-slate-200" />
+                <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                  Today
+                </span>
+                <div className="h-px flex-1 bg-slate-200" />
               </div>
-            ) : (
-              <div className="space-y-3">
-                {bill?.status === "due" && (
-                  <div className="space-y-3">
-                    <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-                      <b>Due:</b> {bill.dueRemark || "No remark"}
-                      {bill.amountPaid > 0 && (
-                        <p className="mt-1 text-xs font-semibold">
-                          Ab tak mila: ₹{bill.amountPaid} • Baaki: ₹{balance}
-                        </p>
-                      )}
-                      {bill.followUpDate && (
-                        <p className="mt-1 text-xs">
-                          Follow-up: {formatDate(bill.followUpDate)}
-                        </p>
-                      )}
-                    </div>
 
-                    {/* Partial payment reverse */}
-                    {bill.amountPaid > 0 && (
-                      <button
-                        type="button"
-                        onClick={handleUnpaid}
-                        disabled={busy === "unpaid"}
-                        className="w-full rounded-xl border border-red-200 bg-red-50 py-2.5 text-xs font-bold text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {busy === "unpaid"
-                          ? "Reversing..."
-                          : `↶ Galti se ₹${bill.amountPaid} collect hua — Unpaid Karein`}
-                      </button>
+              {/* Current Bill */}
+              <div className="flex justify-start">
+                <div className="max-w-[82%] rounded-2xl rounded-bl-md bg-white px-4 py-3 shadow-sm ring-1 ring-slate-200">
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                    Monthly Bill
+                  </p>
+
+                  <p className="mt-1 text-xl font-extrabold text-slate-900">
+                    ₹{currentBillAmount}
+                  </p>
+
+                  <div className="mt-1 flex items-center gap-2">
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${
+                        isPaid
+                          ? "bg-emerald-50 text-emerald-700"
+                          : "bg-amber-50 text-amber-700"
+                      }`}
+                    >
+                      {isPaid ? "PAID" : "DUE"}
+                    </span>
+
+                    {currentBillConcession > 0 && (
+                      <span className="text-[9px] font-semibold text-orange-600">
+                        Concession ₹{currentBillConcession}
+                      </span>
                     )}
                   </div>
-                )}
+                </div>
+              </div>
 
-                <div className="flex gap-2">
-                  <input
-                    type="number"
-                    value={amountPaid}
-                    onChange={(e) => setAmountPaid(e.target.value)}
-                    placeholder={`Aaj kitna mila? (baaki ₹${balance})`}
-                    className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm"
-                  />
+              {/* Payment */}
+              {currentBillPaid > 0 && (
+                <div className="mt-3 flex justify-end">
+                  <div className="max-w-[82%] rounded-2xl rounded-br-md bg-emerald-50 px-4 py-3">
+                    <div className="flex items-center gap-6">
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-600">
+                          Payment Received
+                        </p>
+
+                        <p className="mt-1 text-[10px] text-emerald-500">
+                          {bill?.paidDate ? formatDate(bill.paidDate) : ""}
+                        </p>
+                      </div>
+
+                      <p className="text-lg font-extrabold text-emerald-700">
+                        ₹{currentBillPaid}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Previous Due */}
+              {manualPreviousDue > 0 && (
+                <div className="mt-3 flex justify-start">
+                  <div className="rounded-2xl rounded-bl-md bg-blue-50 px-4 py-3">
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-blue-600">
+                      Previous Due
+                    </p>
+
+                    <p className="mt-1 text-lg font-extrabold text-blue-700">
+                      ₹{manualPreviousDue}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Due */}
+              {bill?.status === "due" && (
+                <div className="mt-3 flex justify-start">
+                  <div className="rounded-2xl rounded-bl-md bg-amber-50 px-4 py-3">
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-amber-600">
+                      Payment Due
+                    </p>
+
+                    {bill.dueRemark && (
+                      <p className="mt-1 text-xs text-amber-800">
+                        {bill.dueRemark}
+                      </p>
+                    )}
+
+                    {bill.followUpDate && (
+                      <p className="mt-1 text-[10px] font-semibold text-amber-600">
+                        Follow-up: {formatDate(bill.followUpDate)}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* =====================================================
+                  RECENT ACTIVITY
+              ====================================================== */}
+              {history?.visits?.length > 0 && (
+                <div className="mt-6">
+                  <div className="flex items-center gap-3 py-3">
+                    <div className="h-px flex-1 bg-slate-100" />
+
+                    <span className="text-[9px] font-bold uppercase tracking-widest text-slate-400">
+                      Recent Activity
+                    </span>
+
+                    <div className="h-px flex-1 bg-slate-100" />
+                  </div>
+
+                  <div className="divide-y divide-slate-100 rounded-xl border border-slate-100 bg-white">
+                    {history.visits.slice(0, 8).map((v) => {
+                      const amount = Number(v.amountCollected || 0);
+                      const isPayment = amount > 0;
+
+                      return (
+                        <div
+                          key={v._id}
+                          className="flex items-center justify-between gap-4 px-4 py-3"
+                        >
+                          <div className="flex min-w-0 items-center gap-3">
+                            <div
+                              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+                                isPayment
+                                  ? "bg-emerald-50 text-emerald-600"
+                                  : "bg-slate-100 text-slate-500"
+                              }`}
+                            >
+                              {isPayment ? "₹" : "•"}
+                            </div>
+
+                            <div className="min-w-0">
+                              <p className="truncate text-xs font-semibold text-slate-800">
+                                {isPayment
+                                  ? "Payment Received"
+                                  : v.purpose || "Activity"}
+                              </p>
+
+                              <p className="mt-0.5 truncate text-[10px] text-slate-400">
+                                {v.outcome || "-"}
+                                {" • "}
+                                {formatDateTime(v.createdAt)}
+                              </p>
+
+                              {v.customerRemark && (
+                                <p className="mt-0.5 truncate text-[10px] text-slate-500">
+                                  {v.customerRemark}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+
+                          {isPayment && (
+                            <p className="shrink-0 text-sm font-extrabold text-emerald-600">
+                              ₹{amount}
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* No bill */}
+              {!bill && currentBillAmount <= 0 && (
+                <div className="mt-5 rounded-xl border border-dashed border-amber-300 bg-amber-50 px-4 py-3">
+                  <p className="text-xs font-bold text-amber-700">
+                    Current package price configured nahi hai.
+                  </p>
+
+                  <p className="mt-1 text-[10px] text-amber-600">
+                    Package Pricing se price configure karein.
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* =======================================================
+            BOTTOM ACTION BAR
+        ======================================================== */}
+          <div className="fixed bottom-3 left-3 right-3 z-40 lg:left-[calc(300px+16px)] lg:right-4">
+            <div className="mx-auto grid max-w-[1000px] grid-cols-4 gap-1.5 rounded-2xl border border-slate-200 bg-white/95 p-1.5 shadow-xl backdrop-blur">
+              <button
+                type="button"
+                onClick={() => setActionDrawer("collect")}
+                disabled={!isPaid && currentBillAmount <= 0}
+                className="rounded-xl bg-emerald-600 py-2.5 text-[10px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                💰 {isPaid ? "Advance" : "Collect"}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActionDrawer("due")}
+                className="rounded-xl bg-amber-50 py-2.5 text-[10px] font-bold text-amber-700"
+              >
+                ⏳ Due
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActionDrawer("concession")}
+                className="rounded-xl bg-orange-50 py-2.5 text-[10px] font-bold text-orange-700"
+              >
+                🎁 Concession
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActionDrawer("more")}
+                className="rounded-xl bg-slate-100 py-2.5 text-[10px] font-bold text-slate-700"
+              >
+                ⋮ More
+              </button>
+            </div>
+          </div>
+
+          {/* =======================================================
+            RIGHT ACTION DRAWER
+        ======================================================== */}
+          {actionDrawer && (
+            <>
+              {/* Overlay */}
+              <button
+                type="button"
+                aria-label="Close"
+                onClick={() => setActionDrawer(null)}
+                className="fixed inset-0 z-50 bg-slate-900/20"
+              />
+
+              <div
+                className={`fixed z-[60] overflow-y-auto bg-white shadow-2xl ${
+                  actionDrawer === "more"
+                    ? "right-0 top-0 h-full w-[300px] max-w-[90vw]"
+                    : "bottom-0 left-0 right-0 max-h-[85vh] rounded-t-3xl lg:bottom-0 lg:left-auto lg:top-0 lg:h-full lg:max-h-none lg:w-[390px] lg:rounded-none"
+                }`}
+              >
+                {/* Drawer Header */}
+                <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200 bg-white px-5 py-4">
+                  <div>
+                    <h2 className="text-sm font-bold text-slate-900">
+                      {actionDrawer === "collect" &&
+                        (isPaid ? "Advance Payment" : "Collect Payment")}
+
+                      {actionDrawer === "due" && "Due / Follow-up"}
+
+                      {actionDrawer === "concession" && "Concession"}
+
+                      {actionDrawer === "editAmount" && "Edit Amount"}
+
+                      {actionDrawer === "info" && "Customer Information"}
+
+                      {actionDrawer === "stock" && "Sell Stock Item"}
+
+                      {actionDrawer === "service" && "Service / Visit"}
+
+                      {actionDrawer === "complaint" && "Complaint"}
+
+                      {actionDrawer === "history" && "Transaction History"}
+
+                      {actionDrawer === "more" && "More Actions"}
+                    </h2>
+
+                    <p className="mt-0.5 text-[10px] text-slate-400">
+                      {consumer.name}
+                    </p>
+                  </div>
 
                   <button
-                    onClick={handleCollect}
-                    disabled={busy === "collect"}
-                    className="rounded-xl bg-emerald-600 px-5 text-sm font-bold text-white hover:bg-emerald-700"
+                    type="button"
+                    onClick={() => setActionDrawer(null)}
+                    className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-slate-500"
                   >
-                    Collect
+                    ×
                   </button>
                 </div>
 
-                <button
-                  onClick={() => setShowDueForm((s) => !s)}
-                  className="w-full rounded-xl border border-amber-200 bg-amber-50 py-2.5 text-xs font-semibold text-amber-700"
-                >
-                  Due Karein
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowConcessionForm((v) => !v)}
-                  className="w-full rounded-xl border border-orange-200 bg-orange-50 px-4 py-2.5 text-sm font-semibold text-orange-700 hover:bg-orange-100"
-                >
-                  {showConcessionForm
-                    ? "Concession Band Karein"
-                    : "Concession Dein"}
-                </button>
-                {showConcessionForm && (
-                  <div className="mt-3 rounded-xl border border-orange-200 bg-orange-50 p-4">
-                    <div className="grid gap-3 sm:grid-cols-2">
+                {/* =================================================
+                  COLLECT
+              ================================================== */}
+                {actionDrawer === "collect" && (
+                  <div className="p-5">
+                    <div className="mb-5 rounded-2xl bg-slate-50 p-4">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                        {isPaid
+                          ? "Advance for Next Month"
+                          : "Current Outstanding"}
+                      </p>
+
+                      <p
+                        className={`mt-1 text-3xl font-extrabold ${
+                          isPaid ? "text-blue-600" : "text-amber-600"
+                        }`}
+                      >
+                        ₹{isPaid ? advanceAmount : totalOutstanding}
+                      </p>
+
+                      <p className="mt-1 text-[11px] text-slate-400">
+                        {isPaid
+                          ? "Payment future month ke liye save hoga."
+                          : "Current bill / previous due ke against adjust hoga."}
+                      </p>
+                    </div>
+
+                    <div className="space-y-4">
+                      <div>
+                        <label className="mb-1.5 block text-xs font-semibold text-slate-600">
+                          {isPaid ? "Advance Amount" : "Received Amount"}
+                        </label>
+
+                        <div className="relative">
+                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-semibold text-slate-400">
+                            ₹
+                          </span>
+
+                          <input
+                            type="number"
+                            min="1"
+                            step="1"
+                            value={amountPaid}
+                            onChange={(e) => setAmountPaid(e.target.value)}
+                            placeholder="Enter amount"
+                            autoFocus
+                            className="w-full rounded-xl border border-slate-200 bg-white py-3 pl-8 pr-3 text-lg font-semibold outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10"
+                          />
+                        </div>
+                      </div>
+
+                      {isPaid && (
+                        <div className="rounded-xl border border-blue-100 bg-blue-50 px-3 py-3">
+                          <p className="text-xs font-semibold text-blue-700">
+                            Advance Payment
+                          </p>
+
+                          <p className="mt-1 text-[10px] leading-5 text-blue-600">
+                            Ye amount current month collection mein add nahi
+                            hoga. Future month ke liye advance balance mein save
+                            hoga.
+                          </p>
+                        </div>
+                      )}
+
+                      {!isPaid && currentBillAmount <= 0 && (
+                        <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-3">
+                          <p className="text-xs font-bold text-red-700">
+                            Current package price configured nahi hai.
+                          </p>
+                        </div>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={isPaid ? handleAdvance : handleCollect}
+                        disabled={
+                          isPaid
+                            ? busy === "advance" || !amountPaid
+                            : busy === "collect" ||
+                              !amountPaid ||
+                              currentBillAmount <= 0
+                        }
+                        className={`w-full rounded-xl py-3 text-sm font-bold text-white transition ${
+                          isPaid
+                            ? "bg-blue-600 hover:bg-blue-700"
+                            : "bg-emerald-600 hover:bg-emerald-700"
+                        } disabled:cursor-not-allowed disabled:opacity-50`}
+                      >
+                        {isPaid
+                          ? busy === "advance"
+                            ? "Saving..."
+                            : "Receive Advance"
+                          : busy === "collect"
+                            ? "Saving..."
+                            : "Collect Payment"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* =================================================
+                  DUE
+              ================================================== */}
+                {actionDrawer === "due" && (
+                  <div className="space-y-4 p-5">
+                    <div>
+                      <label className="mb-1.5 block text-xs font-semibold text-slate-600">
+                        Remark
+                      </label>
+
+                      <textarea
+                        value={dueRemark}
+                        onChange={(e) => setDueRemark(e.target.value)}
+                        placeholder="Kyu due hai?"
+                        rows={4}
+                        className="w-full rounded-xl border border-slate-200 px-3 py-3 text-sm outline-none focus:border-amber-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="mb-1.5 block text-xs font-semibold text-slate-600">
+                        Follow-up Date
+                      </label>
+
+                      <input
+                        type="date"
+                        value={followUpDate}
+                        onChange={(e) => setFollowUpDate(e.target.value)}
+                        className="w-full rounded-xl border border-slate-200 px-3 py-3 text-sm"
+                      />
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleDue}
+                      disabled={busy === "due"}
+                      className="w-full rounded-xl bg-amber-500 py-3 text-sm font-bold text-white disabled:opacity-50"
+                    >
+                      {busy === "due" ? "Saving..." : "Confirm Due"}
+                    </button>
+                  </div>
+                )}
+
+                {/* =================================================
+                  CONCESSION
+              ================================================== */}
+                {actionDrawer === "concession" && (
+                  <div className="space-y-4 p-5">
+                    <div className="rounded-xl bg-orange-50 p-4">
+                      <p className="text-xs font-bold text-orange-700">
+                        Current Bill
+                      </p>
+
+                      <p className="mt-1 text-2xl font-extrabold text-orange-800">
+                        ₹{currentBillAmount}
+                      </p>
+                    </div>
+
+                    <div>
+                      <label className="mb-1.5 block text-xs font-semibold text-slate-600">
+                        Concession Amount
+                      </label>
+
                       <input
                         type="number"
-                        min="1"
+                        min="0"
+                        step="1"
                         value={concessionAmount}
                         onChange={(e) => setConcessionAmount(e.target.value)}
-                        placeholder="Concession ₹"
-                        className="w-full rounded-xl border border-orange-200 bg-white px-3 py-2.5 text-sm outline-none"
+                        placeholder="₹ Concession"
+                        className="w-full rounded-xl border border-slate-200 px-4 py-3 text-lg outline-none focus:border-orange-500"
                       />
+                    </div>
+
+                    <div>
+                      <label className="mb-1.5 block text-xs font-semibold text-slate-600">
+                        Remark
+                      </label>
 
                       <input
                         type="text"
                         value={concessionRemark}
                         onChange={(e) => setConcessionRemark(e.target.value)}
-                        placeholder="Remark (aged / pehchan wale etc.)"
-                        className="w-full rounded-xl border border-orange-200 bg-white px-3 py-2.5 text-sm outline-none"
+                        placeholder="Aged customer / other reason"
+                        className="w-full rounded-xl border border-slate-200 px-3 py-3 text-sm"
                       />
                     </div>
 
                     <button
                       type="button"
                       onClick={handleConcession}
-                      disabled={busy === "concession"}
-                      className="mt-3 w-full rounded-xl bg-orange-500 px-4 py-2.5 text-sm font-bold text-white disabled:opacity-50"
+                      disabled={busy === "concession" || !concessionAmount}
+                      className="w-full rounded-xl bg-orange-500 py-3 text-sm font-bold text-white disabled:opacity-50"
                     >
                       {busy === "concession"
                         ? "Applying..."
@@ -645,436 +1352,476 @@ const ConsumerDetail = () => {
                     </button>
                   </div>
                 )}
-                {showDueForm && (
-                  <div className="space-y-3 rounded-2xl bg-slate-50 p-4">
-                    <textarea
-                      value={dueRemark}
-                      onChange={(e) => setDueRemark(e.target.value)}
-                      placeholder="Kyu due hai?"
-                      rows={2}
-                      className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
-                    />
 
-                    <input
-                      type="date"
-                      value={followUpDate}
-                      onChange={(e) => setFollowUpDate(e.target.value)}
-                      className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
-                    />
+                {/* =================================================
+                  MORE
+              ================================================== */}
+                {actionDrawer === "more" && (
+                  <div className="space-y-1 p-3">
+                    <button
+                      type="button"
+                      onClick={() => setActionDrawer("info")}
+                      className="flex w-full items-center justify-between rounded-xl px-4 py-3 text-left text-sm font-semibold hover:bg-slate-50"
+                    >
+                      Customer Information
+                      <span>›</span>
+                    </button>
 
                     <button
-                      onClick={handleDue}
-                      disabled={busy === "due"}
-                      className="w-full rounded-xl bg-amber-500 py-2.5 text-sm font-bold text-white"
+                      type="button"
+                      onClick={() => setActionDrawer("editAmount")}
+                      className="flex w-full items-center justify-between rounded-xl px-4 py-3 text-left text-sm font-semibold hover:bg-slate-50"
                     >
-                      Confirm Due
+                      Edit Amount
+                      <span>›</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleSetPreviousDue}
+                      className="flex w-full items-center justify-between rounded-xl px-4 py-3 text-left text-sm font-semibold hover:bg-slate-50"
+                    >
+                      Previous Due
+                      <span>₹{manualPreviousDue}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setActionDrawer("stock")}
+                      className="flex w-full items-center justify-between rounded-xl px-4 py-3 text-left text-sm font-semibold hover:bg-slate-50"
+                    >
+                      Sell Stock
+                      <span>›</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setActionDrawer("service")}
+                      className="flex w-full items-center justify-between rounded-xl px-4 py-3 text-left text-sm font-semibold hover:bg-slate-50"
+                    >
+                      Service / Visit
+                      <span>›</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setActionDrawer("complaint")}
+                      className="flex w-full items-center justify-between rounded-xl px-4 py-3 text-left text-sm font-semibold hover:bg-slate-50"
+                    >
+                      Complaint
+                      <span>›</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setActionDrawer("history")}
+                      className="flex w-full items-center justify-between rounded-xl px-4 py-3 text-left text-sm font-semibold hover:bg-slate-50"
+                    >
+                      Transaction History
+                      <span>›</span>
+                    </button>
+
+                    {isPaid && (
+                      <>
+                        <div className="my-2 border-t border-slate-100" />
+
+                        <button
+                          type="button"
+                          onClick={handleUnpaid}
+                          disabled={busy === "unpaid"}
+                          className="w-full rounded-xl px-4 py-3 text-left text-sm font-semibold text-red-600 hover:bg-red-50"
+                        >
+                          {busy === "unpaid" ? "Reversing..." : "↶ Mark Unpaid"}
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {/* =================================================
+                  EDIT AMOUNT
+              ================================================== */}
+                {actionDrawer === "editAmount" && (
+                  <div className="space-y-4 p-5">
+                    <div>
+                      <label className="mb-1.5 block text-xs font-semibold text-slate-600">
+                        Monthly Amount
+                      </label>
+
+                      <input
+                        type="number"
+                        value={newAmount}
+                        onChange={(e) => setNewAmount(e.target.value)}
+                        placeholder="₹ Amount"
+                        className="w-full rounded-xl border border-slate-200 px-4 py-3 text-lg"
+                      />
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleEditAmount}
+                      disabled={busy === "editAmount"}
+                      className="w-full rounded-xl bg-blue-600 py-3 text-sm font-bold text-white disabled:opacity-50"
+                    >
+                      {busy === "editAmount" ? "Saving..." : "Save Amount"}
                     </button>
                   </div>
                 )}
-              </div>
-            )}
-          </Section>
-        </div>
-        {/* STOCK SALE */}
-        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          {/* =====================================================
-      STOCK HEADER
-  ====================================================== */}
-          <button
-            type="button"
-            onClick={() => setShowStock((prev) => !prev)}
-            className="flex w-full items-center justify-between border-b border-slate-100 px-5 py-4 text-left transition hover:bg-slate-50"
-          >
-            <div>
-              <h2 className="text-base font-bold text-slate-900">
-                Sell Stock Item
-              </h2>
 
-              <p className="mt-1 text-xs text-slate-500">
-                Consumer ko stock material bechein
-              </p>
-            </div>
+                {/* =================================================
+                  CUSTOMER INFO
+              ================================================== */}
+                {actionDrawer === "info" && (
+                  <div className="grid grid-cols-2 gap-2 p-4">
+                    <Field label="Address" value={consumer.address} />
 
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 text-slate-600">
-              {showStock ? "▲" : "▼"}
-            </div>
-          </button>
+                    <Field label="Mobile" value={consumer.mobile} />
 
-          {/* =====================================================
-      STOCK FORM
-  ====================================================== */}
-          {showStock && (
-            <div className="space-y-4 p-5">
-              {/* Item */}
-              <div>
-                <label className="mb-1.5 block text-xs font-semibold text-slate-600">
-                  Stock Item
-                </label>
+                    <Field label="STB No" value={consumer.stbNo} />
 
-                <select
-                  value={stockItemId}
-                  onChange={(e) => {
-                    const value = e.target.value;
+                    <Field label="VC No" value={consumer.vcNo} />
 
-                    setStockItemId(value);
+                    <Field
+                      label="Last Package"
+                      value={formatDate(consumer.lastPackageDate)}
+                    />
 
-                    // Selling rate manually enter hoga
-                    setStockUnitPrice("");
-                  }}
-                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
-                >
-                  <option value="">Select item</option>
-
-                  {stockItems.map((item) => (
-                    <option key={item._id} value={item._id}>
-                      {item.name} — Stock: {item.currentStock || 0}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Available stock */}
-              {selectedStockItem && (
-                <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-blue-700">
-                      Available Stock
-                    </span>
-
-                    <span className="text-lg font-bold text-blue-800">
-                      {selectedStockItem.currentStock || 0}
-                    </span>
+                    <Field
+                      label="Expiry"
+                      value={formatDate(consumer.expiryDate)}
+                    />
                   </div>
-
-                  <p className="mt-1 text-[11px] text-blue-600">
-                    {selectedStockItem.name}
-                  </p>
-                </div>
-              )}
-
-              {/* Stock validation warning */}
-              {selectedStockItem &&
-                Number(stockQty) >
-                  Number(selectedStockItem.currentStock || 0) && (
-                  <p className="mt-2 text-xs font-bold text-red-600">
-                    ⚠️ Available stock sirf {selectedStockItem.currentStock}{" "}
-                    hai. Aap {stockQty} quantity enter kar rahe hain.
-                  </p>
                 )}
 
-              {/* Qty + Rate */}
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div>
-                  <label className="mb-1.5 block text-xs font-semibold text-slate-600">
-                    Quantity
-                  </label>
-
-                  <input
-                    type="number"
-                    min="1"
-                    max={selectedStockItem?.currentStock ?? undefined}
-                    step="1"
-                    value={stockQty}
-                    onChange={(e) => setStockQty(e.target.value)}
-                    className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
-                  />
-                </div>
-
-                <div>
-                  <label className="mb-1.5 block text-xs font-semibold text-slate-600">
-                    Selling Rate / Unit
-                  </label>
-
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={stockUnitPrice}
-                    onChange={(e) => setStockUnitPrice(e.target.value)}
-                    placeholder="₹ Rate"
-                    className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
-                  />
-                </div>
-              </div>
-
-              {/* Amount summary */}
-              <div className="grid grid-cols-3 gap-2">
-                <div className="rounded-xl bg-slate-50 p-3">
-                  <p className="text-[11px] text-slate-500">Total</p>
-
-                  <p className="mt-1 text-lg font-bold text-slate-900">
-                    ₹{stockTotal}
-                  </p>
-                </div>
-
-                <div className="rounded-xl bg-emerald-50 p-3">
-                  <p className="text-[11px] text-emerald-600">Paid</p>
-
-                  <p className="mt-1 text-lg font-bold text-emerald-700">
-                    ₹{Number(stockAmountPaid || 0)}
-                  </p>
-                </div>
-
-                <div
-                  className={`rounded-xl p-3 ${
-                    stockPending > 0 ? "bg-amber-50" : "bg-slate-50"
-                  }`}
-                >
-                  <p className="text-[11px] text-slate-500">Pending</p>
-
-                  <p
-                    className={`mt-1 text-lg font-bold ${
-                      stockPending > 0 ? "text-amber-700" : "text-slate-800"
-                    }`}
-                  >
-                    ₹{Math.max(stockPending, 0)}
-                  </p>
-                </div>
-              </div>
-
-              {/* Amount Received */}
-              <div>
-                <label className="mb-1.5 block text-xs font-semibold text-slate-600">
-                  Amount Received
-                </label>
-
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={stockAmountPaid}
-                  onChange={(e) => setStockAmountPaid(e.target.value)}
-                  placeholder={`Aaj kitna mila? (Total ₹${stockTotal})`}
-                  className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
-                />
-              </div>
-
-              {/* Remark */}
-              <input
-                type="text"
-                value={stockRemark}
-                onChange={(e) => setStockRemark(e.target.value)}
-                placeholder="Remark (optional)"
-                className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
-              />
-
-              {/* Sell */}
-              <button
-                type="button"
-                onClick={handleStockSale}
-                disabled={
-                  stockLoading || !stockItemId || !stockQty || !stockUnitPrice
-                }
-                className="w-full rounded-xl bg-indigo-600 py-3 text-sm font-bold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {stockLoading ? "Selling..." : "Sell Item"}
-              </button>
-            </div>
-          )}
-        </div>
-        <div className="grid gap-5 lg:grid-cols-2">
-          <Section
-            title="Service / Visit"
-            subtitle="Record field activity"
-            action={
-              <button
-                onClick={() => setShowServiceForm((s) => !s)}
-                className="rounded-lg bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700"
-              >
-                + Add
-              </button>
-            }
-          >
-            {showServiceForm && (
-              <div className="space-y-3">
-                <select
-                  value={servicePurpose}
-                  onChange={(e) => setServicePurpose(e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"
-                >
-                  <option value="service">Service / Repair</option>
-                  <option value="collection">Collection Attempt</option>
-                  <option value="other">Other</option>
-                </select>
-                <input
-                  value={serviceNote}
-                  onChange={(e) => setServiceNote(e.target.value)}
-                  placeholder="Kisliye gaye the"
-                  className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"
-                />
-                <select
-                  value={serviceOutcome}
-                  onChange={(e) => {
-                    const value = e.target.value;
-
-                    setServiceOutcome(value);
-
-                    if (value === "promised_later") {
-                      setServiceFollowUpDays("1");
-                    }
-                  }}
-                  className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"
-                >
-                  <option value="not_paid">Paisa nahi mila</option>
-                  <option value="promised_later">Baad me denge</option>
-                  <option value="paid">Paisa mil gaya</option>
-                </select>
-                {serviceOutcome === "promised_later" && (
-                  <div className="space-y-1">
-                    <label className="text-xs font-semibold text-slate-600">
-                      Follow-up After
-                    </label>
-
+                {/* =================================================
+                  STOCK
+              ================================================== */}
+                {actionDrawer === "stock" && (
+                  <div className="space-y-3 p-5">
                     <select
-                      value={serviceFollowUpDays}
-                      onChange={(e) => setServiceFollowUpDays(e.target.value)}
-                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
+                      value={stockItemId}
+                      onChange={(e) => {
+                        setStockItemId(e.target.value);
+                        setStockUnitPrice("");
+                      }}
+                      className="w-full rounded-xl border border-slate-200 px-3 py-3 text-sm"
                     >
-                      <option value="1">1 Day Later</option>
-                      <option value="2">2 Days Later</option>
-                      <option value="3">3 Days Later</option>
-                      <option value="7">7 Days Later</option>
-                      <option value="15">15 Days Later</option>
-                      <option value="30">30 Days Later</option>
+                      <option value="">Select item</option>
+
+                      {stockItems.map((item) => (
+                        <option key={item._id} value={item._id}>
+                          {item.name} — Stock: {item.currentStock || 0}
+                        </option>
+                      ))}
                     </select>
 
-                    <p className="text-[11px] text-slate-400">
-                      Save karne ki date se automatic follow-up date set hogi.
-                    </p>
+                    {selectedStockItem && (
+                      <div className="rounded-xl bg-blue-50 p-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-semibold text-blue-600">
+                            Available
+                          </span>
+
+                          <span className="text-lg font-bold text-blue-700">
+                            {selectedStockItem.currentStock || 0}
+                          </span>
+                        </div>
+
+                        {Number(stockQty) >
+                          Number(selectedStockItem.currentStock || 0) && (
+                          <p className="mt-2 text-xs font-bold text-red-600">
+                            ⚠ Stock insufficient
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        value={stockQty}
+                        onChange={(e) => setStockQty(e.target.value)}
+                        placeholder="Quantity"
+                        className="rounded-xl border border-slate-200 px-3 py-3 text-sm"
+                      />
+
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={stockUnitPrice}
+                        onChange={(e) => setStockUnitPrice(e.target.value)}
+                        placeholder="Selling Rate"
+                        className="rounded-xl border border-slate-200 px-3 py-3 text-sm"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className="rounded-xl bg-slate-50 p-3">
+                        <p className="text-[10px] text-slate-400">Total</p>
+                        <p className="mt-1 text-sm font-bold">₹{stockTotal}</p>
+                      </div>
+
+                      <div className="rounded-xl bg-emerald-50 p-3">
+                        <p className="text-[10px] text-emerald-600">Paid</p>
+                        <p className="mt-1 text-sm font-bold text-emerald-700">
+                          ₹{Number(stockAmountPaid || 0)}
+                        </p>
+                      </div>
+
+                      <div className="rounded-xl bg-amber-50 p-3">
+                        <p className="text-[10px] text-amber-600">Due</p>
+                        <p className="mt-1 text-sm font-bold text-amber-700">
+                          ₹{Math.max(stockPending, 0)}
+                        </p>
+                      </div>
+                    </div>
+
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={stockAmountPaid}
+                      onChange={(e) => setStockAmountPaid(e.target.value)}
+                      placeholder="Amount received"
+                      className="w-full rounded-xl border border-slate-200 px-3 py-3 text-sm"
+                    />
+
+                    <input
+                      type="text"
+                      value={stockRemark}
+                      onChange={(e) => setStockRemark(e.target.value)}
+                      placeholder="Remark (optional)"
+                      className="w-full rounded-xl border border-slate-200 px-3 py-3 text-sm"
+                    />
+
+                    <button
+                      type="button"
+                      onClick={handleStockSale}
+                      disabled={
+                        stockLoading ||
+                        !stockItemId ||
+                        !stockQty ||
+                        !stockUnitPrice
+                      }
+                      className="w-full rounded-xl bg-indigo-600 py-3 text-sm font-bold text-white disabled:opacity-50"
+                    >
+                      {stockLoading ? "Selling..." : "Sell Item"}
+                    </button>
                   </div>
                 )}
-                <input
-                  value={serviceRemark}
-                  onChange={(e) => setServiceRemark(e.target.value)}
-                  placeholder="Customer remark (optional)"
-                  className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"
-                />
-                <button
-                  onClick={handleServiceSubmit}
-                  disabled={busy === "service"}
-                  className="w-full rounded-xl bg-blue-600 py-2.5 text-sm font-bold text-white"
-                >
-                  Save Visit
-                </button>
-              </div>
-            )}
-            {!showServiceForm && (
-              <p className="text-sm text-slate-400">
-                Use “+ Add” to record a service or field visit.
-              </p>
-            )}
-          </Section>
 
-          <Section
-            title="Complaint"
-            subtitle="Register a consumer complaint"
-            action={
-              <button
-                onClick={() => setShowComplaintForm((s) => !s)}
-                className="rounded-lg bg-orange-50 px-3 py-1.5 text-xs font-semibold text-orange-700"
-              >
-                + Add
-              </button>
-            }
-          >
-            {showComplaintForm ? (
-              <div className="space-y-3">
-                <textarea
-                  value={complaintText}
-                  onChange={(e) => setComplaintText(e.target.value)}
-                  placeholder="Complaint kya hai?"
-                  rows={4}
-                  className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"
-                />
-                <button
-                  onClick={handleComplaintSubmit}
-                  disabled={busy === "complaint"}
-                  className="w-full rounded-xl bg-orange-600 py-2.5 text-sm font-bold text-white"
-                >
-                  Save Complaint
-                </button>
-              </div>
-            ) : (
-              <p className="text-sm text-slate-400">No complaint form open.</p>
-            )}
-          </Section>
-        </div>
+                {/* =================================================
+                  SERVICE
+              ================================================== */}
+                {actionDrawer === "service" && (
+                  <div className="space-y-3 p-5">
+                    <select
+                      value={servicePurpose}
+                      onChange={(e) => setServicePurpose(e.target.value)}
+                      className="w-full rounded-xl border border-slate-200 px-3 py-3 text-sm"
+                    >
+                      <option value="service">Service / Repair</option>
 
-        <Section
-          title="Consumer History"
-          subtitle="Monthly bills and field visits"
-          action={
-            <button
-              onClick={loadHistory}
-              className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700"
-            >
-              {busy === "history"
-                ? "Loading..."
-                : showHistory
-                  ? "Hide History ▲"
-                  : "View History ▼"}
-            </button>
-          }
-        >
-          {showHistory && history ? (
-            <div className="grid gap-6 lg:grid-cols-2">
-              <div>
-                <h3 className="mb-3 text-xs font-bold uppercase tracking-wide text-slate-400">
-                  Monthly Bills
-                </h3>
-                <div className="space-y-2">
-                  {history.bills.length === 0 && (
-                    <p className="text-sm text-slate-400">Koi bill nahi</p>
-                  )}
-                  {history.bills.map((b) => (
-                    <div
-                      key={b._id}
-                      className="flex items-center justify-between rounded-xl bg-slate-50 p-3 text-sm"
+                      <option value="collection">Collection Attempt</option>
+
+                      <option value="other">Other</option>
+                    </select>
+
+                    <input
+                      value={serviceNote}
+                      onChange={(e) => setServiceNote(e.target.value)}
+                      placeholder="Kisliye gaye the"
+                      className="w-full rounded-xl border border-slate-200 px-3 py-3 text-sm"
+                    />
+
+                    <select
+                      value={serviceOutcome}
+                      onChange={(e) => {
+                        const value = e.target.value;
+
+                        setServiceOutcome(value);
+
+                        if (value === "promised_later") {
+                          setServiceFollowUpDays("1");
+                        }
+                      }}
+                      className="w-full rounded-xl border border-slate-200 px-3 py-3 text-sm"
                     >
-                      <span className="font-medium text-slate-700">
-                        {b.month}
-                      </span>
-                      <span className="text-right text-xs text-slate-500">
-                        {b.status} • ₹{b.amountPaid || 0}/₹{b.amount}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <h3 className="mb-3 text-xs font-bold uppercase tracking-wide text-slate-400">
-                  Visits
-                </h3>
-                <div className="space-y-2">
-                  {history.visits.length === 0 && (
-                    <p className="text-sm text-slate-400">Koi visit nahi</p>
-                  )}
-                  {history.visits.map((v) => (
-                    <div
-                      key={v._id}
-                      className="rounded-xl bg-slate-50 p-3 text-sm"
+                      <option value="not_paid">Paisa nahi mila</option>
+
+                      <option value="promised_later">Baad me denge</option>
+
+                      <option value="paid">Paisa mil gaya</option>
+                    </select>
+
+                    {serviceOutcome === "promised_later" && (
+                      <select
+                        value={serviceFollowUpDays}
+                        onChange={(e) => setServiceFollowUpDays(e.target.value)}
+                        className="w-full rounded-xl border border-slate-200 px-3 py-3 text-sm"
+                      >
+                        <option value="1">1 Day Later</option>
+                        <option value="2">2 Days Later</option>
+                        <option value="3">3 Days Later</option>
+                        <option value="7">7 Days Later</option>
+                        <option value="15">15 Days Later</option>
+                        <option value="30">30 Days Later</option>
+                      </select>
+                    )}
+
+                    <input
+                      value={serviceRemark}
+                      onChange={(e) => setServiceRemark(e.target.value)}
+                      placeholder="Customer remark"
+                      className="w-full rounded-xl border border-slate-200 px-3 py-3 text-sm"
+                    />
+
+                    <button
+                      type="button"
+                      onClick={handleServiceSubmit}
+                      disabled={busy === "service"}
+                      className="w-full rounded-xl bg-blue-600 py-3 text-sm font-bold text-white disabled:opacity-50"
                     >
-                      <p className="font-semibold text-slate-700">
-                        {formatDateTime(v.createdAt)} •{" "}
-                        {v.visitedBy?.name || "?"}
+                      {busy === "service" ? "Saving..." : "Save Visit"}
+                    </button>
+                  </div>
+                )}
+
+                {/* =================================================
+                  COMPLAINT
+              ================================================== */}
+                {actionDrawer === "complaint" && (
+                  <div className="space-y-3 p-5">
+                    <textarea
+                      value={complaintText}
+                      onChange={(e) => setComplaintText(e.target.value)}
+                      placeholder="Complaint kya hai?"
+                      rows={5}
+                      className="w-full rounded-xl border border-slate-200 px-3 py-3 text-sm outline-none focus:border-orange-500"
+                    />
+
+                    <button
+                      type="button"
+                      onClick={handleComplaintSubmit}
+                      disabled={busy === "complaint"}
+                      className="w-full rounded-xl bg-orange-600 py-3 text-sm font-bold text-white disabled:opacity-50"
+                    >
+                      {busy === "complaint" ? "Saving..." : "Save Complaint"}
+                    </button>
+                  </div>
+                )}
+
+                {/* =================================================
+                  HISTORY
+              ================================================== */}
+                {actionDrawer === "history" && (
+                  <div className="space-y-5 p-4">
+                    {/* Bills */}
+                    <div>
+                      <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                        Monthly Bills
                       </p>
-                      <p className="mt-1 text-xs text-slate-500">
-                        {v.purpose} • {v.outcome}
-                        {v.amountCollected ? ` • ₹${v.amountCollected}` : ""}
-                        {v.serviceNote ? ` • ${v.serviceNote}` : ""}
-                        {v.customerRemark ? ` • "${v.customerRemark}"` : ""}
-                      </p>
+
+                      <div className="space-y-2">
+                        {!history?.bills?.length ? (
+                          <p className="rounded-xl bg-slate-50 p-4 text-xs text-slate-400">
+                            Koi bill nahi.
+                          </p>
+                        ) : (
+                          history.bills.map((b) => (
+                            <div
+                              key={b._id}
+                              className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-3"
+                            >
+                              <div>
+                                <p className="text-sm font-bold text-slate-700">
+                                  {b.month}
+                                </p>
+
+                                <p className="mt-0.5 text-[10px] text-slate-400">
+                                  {b.status}
+                                </p>
+                              </div>
+
+                              <p className="text-xs font-bold text-slate-700">
+                                ₹{b.amountPaid || 0}
+                                {" / ₹"}
+                                {b.amount}
+                              </p>
+                            </div>
+                          ))
+                        )}
+                      </div>
                     </div>
-                  ))}
-                </div>
+
+                    {/* Visits */}
+                    <div>
+                      <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                        Activity
+                      </p>
+
+                      <div className="space-y-2">
+                        {!history?.visits?.length ? (
+                          <p className="rounded-xl bg-slate-50 p-4 text-xs text-slate-400">
+                            Koi activity nahi.
+                          </p>
+                        ) : (
+                          history.visits.map((v) => (
+                            <div
+                              key={v._id}
+                              className={`rounded-xl p-3 ${
+                                Number(v.amountCollected || 0) > 0
+                                  ? "bg-emerald-50"
+                                  : "bg-slate-50"
+                              }`}
+                            >
+                              <div className="flex items-center justify-between gap-3">
+                                <p className="text-xs font-semibold text-slate-700">
+                                  {v.purpose || "Activity"}
+                                </p>
+
+                                {Number(v.amountCollected || 0) > 0 && (
+                                  <p className="text-sm font-extrabold text-emerald-700">
+                                    ₹{v.amountCollected}
+                                  </p>
+                                )}
+                              </div>
+
+                              <p className="mt-1 text-[10px] text-slate-500">
+                                {v.outcome || "-"}
+                              </p>
+
+                              {v.serviceNote && (
+                                <p className="mt-1 text-[10px] text-slate-600">
+                                  {v.serviceNote}
+                                </p>
+                              )}
+
+                              {v.customerRemark && (
+                                <p className="mt-1 text-[10px] text-slate-600">
+                                  “{v.customerRemark}”
+                                </p>
+                              )}
+
+                              <p className="mt-1.5 text-[9px] text-slate-400">
+                                {formatDateTime(v.createdAt)}
+                                {" • "}
+                                {v.visitedBy?.name || "User"}
+                              </p>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
-            </div>
-          ) : (
-            <p className="text-sm text-slate-400">
-              History load karne ke liye button dabayein.
-            </p>
+            </>
           )}
-        </Section>
+        </main>
       </div>
     </div>
   );

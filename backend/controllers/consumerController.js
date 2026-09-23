@@ -167,12 +167,56 @@ const getConsumerDetail = async (req, res) => {
       return res.status(404).json({ message: "Consumer nahi mila" });
 
     const month = getCurrentMonth();
-    const currentBill = await MonthlyBill.findOne({
+    let currentBill = await MonthlyBill.findOne({
       consumerId: consumer._id,
       month,
     });
 
-    return res.json({ ...consumer.toObject(), currentBill });
+    // -----------------------------------------
+    // ADVANCE AUTO ADJUST
+    // -----------------------------------------
+
+    if (
+      currentBill &&
+      Number(consumer.advanceAmount || 0) > 0 &&
+      currentBill.status !== "paid"
+    ) {
+      const billAmount = Number(currentBill.amount || 0);
+      const alreadyPaid = Number(currentBill.amountPaid || 0);
+      const concession = Number(currentBill.concessionAmount || 0);
+
+      const billBalance = Math.max(billAmount - alreadyPaid - concession, 0);
+
+      const advance = Number(consumer.advanceAmount || 0);
+
+      const advanceUsed = Math.min(advance, billBalance);
+
+      if (advanceUsed > 0) {
+        currentBill.amountPaid = alreadyPaid + advanceUsed;
+
+        const finalSettled =
+          Number(currentBill.amountPaid || 0) +
+          Number(currentBill.concessionAmount || 0);
+
+        if (finalSettled >= billAmount) {
+          currentBill.status = "paid";
+          currentBill.paidDate = new Date();
+          currentBill.dueRemark = "";
+          currentBill.followUpDate = null;
+        }
+
+        await currentBill.save();
+
+        consumer.advanceAmount = advance - advanceUsed;
+
+        await consumer.save();
+      }
+    }
+
+    return res.json({
+      ...consumer.toObject(),
+      currentBill,
+    });
   } catch (error) {
     console.error("getConsumerDetail error:", error);
     return res
@@ -281,15 +325,72 @@ const applyConcession = async (req, res) => {
     });
   }
 };
+const setPreviousDue = async (req, res) => {
+  try {
+    const { previousDue } = req.body;
+
+    const amount = Number(previousDue);
+
+    if (!Number.isFinite(amount) || amount < 0) {
+      return res.status(400).json({
+        message: "Valid previous due amount enter karein",
+      });
+    }
+
+    const consumer = await Consumer.findById(req.params.id);
+
+    if (!consumer) {
+      return res.status(404).json({
+        message: "Consumer nahi mila",
+      });
+    }
+
+    consumer.previousDue = amount;
+
+    await consumer.save();
+
+    await logActivity(
+      req.user,
+      "previous_due_update",
+      `${consumer.name} (${consumer.consumerId}) ka previous due ₹${amount} set kiya`,
+    );
+
+    return res.json({
+      message: "Previous due save ho gaya",
+      previousDue: consumer.previousDue,
+    });
+  } catch (error) {
+    console.error("setPreviousDue error:", error);
+
+    return res.status(500).json({
+      message: error.message || "Previous due save nahi hua",
+    });
+  }
+};
 const collectPayment = async (req, res) => {
   try {
-    const { amountPaid } = req.body;
+    const {
+      amountPaid,
+      concessionAmount = 0,
+      concessionRemark = "",
+    } = req.body;
 
     const paidNow = Number(amountPaid);
+    const concessionNow = Number(concessionAmount || 0);
+
+    // -----------------------------------------
+    // BASIC VALIDATION
+    // -----------------------------------------
 
     if (!Number.isFinite(paidNow) || paidNow <= 0) {
       return res.status(400).json({
         message: "Valid collection amount enter karein",
+      });
+    }
+
+    if (!Number.isFinite(concessionNow) || concessionNow < 0) {
+      return res.status(400).json({
+        message: "Valid concession amount enter karein",
       });
     }
 
@@ -303,88 +404,418 @@ const collectPayment = async (req, res) => {
 
     const month = getCurrentMonth();
 
-    let bill = await MonthlyBill.findOne({
+    // -----------------------------------------
+    // CURRENT MONTH BILL
+    // -----------------------------------------
+
+    let currentBill = await MonthlyBill.findOne({
       consumerId: consumer._id,
       month,
     });
 
-    if (!bill) {
-      bill = await MonthlyBill.create({
+    if (!currentBill) {
+      const currentPackageAmount = Number(consumer.monthlyAmount || 0);
+
+      if (currentPackageAmount <= 0) {
+        return res.status(400).json({
+          message:
+            "Current monthly package amount set nahi hai. Pehle package amount set karein.",
+        });
+      }
+
+      currentBill = await MonthlyBill.create({
         consumerId: consumer._id,
         month,
-        amount: consumer.monthlyAmount || 0,
+        amount: currentPackageAmount,
+        baseAmount: currentPackageAmount,
         amountPaid: 0,
+        concessionAmount: 0,
+        concessionRemark: "",
         status: "unpaid",
       });
     }
 
-    const billAmount = Number(bill.amount || 0);
-    const alreadyPaid = Number(bill.amountPaid || 0);
-    const balanceBefore = billAmount - alreadyPaid;
+    // -----------------------------------------
+    // CURRENT MONTH BALANCE
+    // -----------------------------------------
 
-    if (balanceBefore <= 0) {
+    const currentAmount = Number(currentBill.amount || 0);
+
+    const currentPaid = Number(currentBill.amountPaid || 0);
+
+    const currentConcession = Number(currentBill.concessionAmount || 0);
+
+    const currentBalance = Math.max(
+      currentAmount - currentPaid - currentConcession,
+      0,
+    );
+
+    // -----------------------------------------
+    // PREVIOUS MONTH BILL DUES
+    // -----------------------------------------
+
+    const previousBills = await MonthlyBill.find({
+      consumerId: consumer._id,
+      month: { $lt: month },
+    }).sort({
+      month: 1,
+      createdAt: 1,
+    });
+
+    const previousDueBills = [];
+
+    let previousBillsDue = 0;
+
+    for (const oldBill of previousBills) {
+      const oldAmount = Number(oldBill.amount || 0);
+
+      const oldPaid = Number(oldBill.amountPaid || 0);
+
+      const oldConcession = Number(oldBill.concessionAmount || 0);
+
+      const oldBalance = Math.max(oldAmount - oldPaid - oldConcession, 0);
+
+      if (oldBalance > 0) {
+        previousBillsDue += oldBalance;
+
+        previousDueBills.push({
+          bill: oldBill,
+          balance: oldBalance,
+        });
+      }
+    }
+
+    // -----------------------------------------
+    // MANUAL PREVIOUS DUE
+    // Ye unbilled/missing history ka due hai
+    // -----------------------------------------
+
+    const manualPreviousDue = Number(consumer.previousDue || 0);
+
+    const totalPreviousDue = previousBillsDue + manualPreviousDue;
+
+    // -----------------------------------------
+    // TOTAL OUTSTANDING
+    // -----------------------------------------
+
+    const totalOutstanding = totalPreviousDue + currentBalance;
+
+    // -----------------------------------------
+    // CONCESSION ONLY CURRENT MONTH
+    // -----------------------------------------
+
+    if (concessionNow > currentBalance) {
       return res.status(400).json({
-        message: "Is bill ka payment already complete hai",
+        message: `Current month mein maximum ₹${currentBalance} concession de sakte hain.`,
       });
     }
 
-    if (paidNow > balanceBefore) {
-      return res.status(400).json({
-        message: `Maximum ₹${balanceBefore} hi collect kar sakte hain`,
+    // -----------------------------------------
+    // COLLECTION + CONCESSION VALIDATION
+    // -----------------------------------------
+
+    // -----------------------------------------
+    // ALLOCATE PAYMENT
+    // 1. Old monthly bills
+    // 2. Manual previous due
+    // 3. Current month
+    // -----------------------------------------
+
+    let remainingCollection = paidNow;
+
+    // -----------------------------------------
+    // OLD MONTHLY BILLS
+    // -----------------------------------------
+
+    for (const entry of previousDueBills) {
+      if (remainingCollection <= 0) {
+        break;
+      }
+
+      const oldBill = entry.bill;
+      const oldBalance = entry.balance;
+
+      const collectFromOld = Math.min(remainingCollection, oldBalance);
+
+      const oldPaid = Number(oldBill.amountPaid || 0);
+
+      oldBill.amountPaid = oldPaid + collectFromOld;
+
+      const oldSettled =
+        Number(oldBill.amountPaid || 0) + Number(oldBill.concessionAmount || 0);
+
+      if (oldSettled >= Number(oldBill.amount || 0)) {
+        oldBill.status = "paid";
+        oldBill.paidDate = new Date();
+        oldBill.dueRemark = "";
+        oldBill.followUpDate = null;
+      } else {
+        oldBill.status = "due";
+
+        const oldRemaining = Number(oldBill.amount || 0) - oldSettled;
+
+        oldBill.dueRemark = `₹${oldRemaining} baaki hai`;
+      }
+
+      oldBill.lastEditedBy = req.user._id;
+      oldBill.lastEditedAt = new Date();
+
+      await oldBill.save();
+
+      // Old due collection history
+      await VisitLog.create({
+        consumerId: consumer._id,
+        visitedBy: req.user._id,
+        purpose: "collection",
+        outcome: "paid",
+        amountCollected: collectFromOld,
+        customerRemark: `Previous due ${oldBill.month} se adjust kiya`,
+        followUpDate: null,
+        reversed: false,
+      });
+
+      remainingCollection -= collectFromOld;
+    }
+
+    // -----------------------------------------
+    // MANUAL PREVIOUS DUE
+    // -----------------------------------------
+
+    if (remainingCollection > 0 && consumer.previousDue > 0) {
+      const collectFromManualDue = Math.min(
+        remainingCollection,
+        Number(consumer.previousDue || 0),
+      );
+
+      consumer.previousDue =
+        Number(consumer.previousDue || 0) - collectFromManualDue;
+
+      await consumer.save();
+
+      await VisitLog.create({
+        consumerId: consumer._id,
+        visitedBy: req.user._id,
+        purpose: "collection",
+        outcome: "paid",
+        amountCollected: collectFromManualDue,
+        customerRemark: "Manual previous due adjust kiya",
+        followUpDate: null,
+        reversed: false,
+      });
+
+      remainingCollection -= collectFromManualDue;
+    }
+
+    // -----------------------------------------
+    // CURRENT MONTH COLLECTION
+    // -----------------------------------------
+
+    const currentCollection = Math.min(remainingCollection, currentBalance);
+
+    currentBill.amountPaid = currentPaid + currentCollection;
+    // -----------------------------------------
+    // EXTRA COLLECTION → ADVANCE
+    // -----------------------------------------
+
+    const advanceReceived = Math.max(
+      remainingCollection - currentCollection,
+      0,
+    );
+
+    if (advanceReceived > 0) {
+      consumer.advanceAmount =
+        Number(consumer.advanceAmount || 0) + advanceReceived;
+
+      await consumer.save();
+
+      // Advance cash ki history bhi rakhein
+      // taaki total collection report mein amount miss na ho.
+      await VisitLog.create({
+        consumerId: consumer._id,
+        visitedBy: req.user._id,
+        purpose: "collection",
+        outcome: "paid",
+        amountCollected: advanceReceived,
+        customerRemark: "Advance payment received for future month",
+        followUpDate: null,
+        reversed: false,
       });
     }
 
-    // Add current collection
-    bill.amountPaid = alreadyPaid + paidNow;
+    // -----------------------------------------
+    // CURRENT MONTH CONCESSION
+    // -----------------------------------------
 
-    bill.lastEditedBy = req.user._id;
-    bill.lastEditedAt = new Date();
+    currentBill.concessionAmount = currentConcession + concessionNow;
 
-    // Paid / Partial Due
-    if (bill.amount > 0 && bill.amountPaid >= bill.amount) {
-      bill.status = "paid";
-      bill.paidDate = new Date();
-      bill.dueRemark = "";
-      bill.followUpDate = null;
+    if (concessionRemark.trim()) {
+      currentBill.concessionRemark = concessionRemark.trim();
+    }
+
+    // -----------------------------------------
+    // CURRENT MONTH FINAL STATUS
+    // -----------------------------------------
+
+    const finalCurrentSettled =
+      Number(currentBill.amountPaid || 0) +
+      Number(currentBill.concessionAmount || 0);
+
+    const finalCurrentBalance = Math.max(
+      currentAmount - finalCurrentSettled,
+      0,
+    );
+
+    if (currentAmount > 0 && finalCurrentBalance <= 0) {
+      currentBill.status = "paid";
+      currentBill.paidDate = new Date();
+      currentBill.dueRemark = "";
+      currentBill.followUpDate = null;
     } else {
-      bill.status = "due";
+      currentBill.status = "due";
 
-      const balance = bill.amount - bill.amountPaid;
-
-      bill.dueRemark = `Partial payment — ₹${balance} baaki hai`;
+      currentBill.dueRemark = `₹${finalCurrentBalance} baaki hai`;
     }
 
-    await bill.save();
+    currentBill.lastEditedBy = req.user._id;
+    currentBill.lastEditedAt = new Date();
 
-    // Save collection history
+    await currentBill.save();
+
+    // -----------------------------------------
+    // CURRENT MONTH COLLECTION HISTORY
+    // -----------------------------------------
+
+    if (currentCollection > 0) {
+      await VisitLog.create({
+        consumerId: consumer._id,
+        visitedBy: req.user._id,
+        purpose: "collection",
+        outcome: finalCurrentBalance <= 0 ? "paid" : "promised_later",
+        amountCollected: currentCollection,
+
+        customerRemark:
+          concessionNow > 0
+            ? `Collection ₹${currentCollection}. ` +
+              `Concession ₹${concessionNow}` +
+              (concessionRemark.trim() ? ` — ${concessionRemark.trim()}` : "")
+            : "",
+
+        followUpDate: null,
+
+        reversed: false,
+      });
+    }
+
+    // -----------------------------------------
+    // ACTIVITY LOG
+    // -----------------------------------------
+
+    let activityMessage = `${consumer.name} (${consumer.consumerId}) se ₹${paidNow} liya`;
+
+    if (totalPreviousDue > 0) {
+      activityMessage += `, previous due ₹${Math.min(
+        paidNow,
+        totalPreviousDue,
+      )} adjust kiya`;
+    }
+
+    if (concessionNow > 0) {
+      activityMessage += `, ₹${concessionNow} concession diya`;
+    }
+
+    await logActivity(req.user, "collect_payment", activityMessage);
+
+    // -----------------------------------------
+    // RESPONSE
+    // -----------------------------------------
+
+    return res.json({
+      ...currentBill.toObject(),
+
+      previousDue: Number(consumer.previousDue || 0),
+      previousBillsDue,
+      totalPreviousDue,
+      totalOutstanding,
+
+      currentCollection,
+      totalCollected: paidNow,
+      concessionGiven: concessionNow,
+      finalCurrentBalance,
+
+      // IMPORTANT
+      advanceAmount: Number(consumer.advanceAmount || 0),
+
+      consumerId: consumer._id,
+    });
+  } catch (error) {
+    console.error("collectPayment FULL ERROR:", error);
+
+    return res.status(500).json({
+      message: error.message || "Server error",
+
+      error: error.message || "Unknown error",
+    });
+  }
+};
+const recordAdvancePayment = async (req, res) => {
+  try {
+    const amount = Number(req.body.amount);
+
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return res.status(400).json({
+        message: "Valid advance amount enter karein",
+      });
+    }
+
+    const consumer = await Consumer.findById(req.params.id);
+
+    if (!consumer) {
+      return res.status(404).json({
+        message: "Consumer nahi mila",
+      });
+    }
+
+    const oldAdvance = Number(consumer.advanceAmount || 0);
+
+    const newAdvance = oldAdvance + amount;
+
+    // ONLY advance increase
+    consumer.advanceAmount = newAdvance;
+
+    await consumer.save();
+
     await VisitLog.create({
       consumerId: consumer._id,
       visitedBy: req.user._id,
       purpose: "collection",
-      outcome: bill.status === "paid" ? "paid" : "promised_later",
-      amountCollected: paidNow,
-      customerRemark: bill.status !== "paid" ? bill.dueRemark : "",
+      outcome: "paid",
+      amountCollected: amount,
+      customerRemark: "Advance payment received for future month",
       followUpDate: null,
       reversed: false,
     });
 
     await logActivity(
       req.user,
-      "collect_payment",
-      `${consumer.name} (${consumer.consumerId}) se ₹${paidNow} liya`,
+      "advance_payment",
+      `${consumer.name} (${consumer.consumerId}) se ₹${amount} advance liya`,
     );
 
-    return res.json(bill);
+    return res.json({
+      message: `₹${amount} advance successfully save ho gaya`,
+      advanceReceived: amount,
+      previousAdvance: oldAdvance,
+      advanceAmount: newAdvance,
+    });
   } catch (error) {
-    console.error("collectPayment FULL ERROR:", error);
+    console.error("recordAdvancePayment error:", error);
 
     return res.status(500).json({
-      message: error.message || "Server error",
-      error: error.message || "Unknown error",
+      message: "Advance payment save nahi hua",
+      error: error.message,
     });
   }
 };
-
 const editBillAmount = async (req, res) => {
   try {
     const { amount } = req.body;
@@ -718,10 +1149,14 @@ module.exports = {
   searchConsumers,
   getConsumerDetail,
   collectPayment,
+  recordAdvancePayment,
   editBillAmount,
   markUnpaid,
   markDue,
   logVisit,
   getHistory,
   applyConcession,
+  markDue,
+  applyConcession,
+  setPreviousDue,
 };
