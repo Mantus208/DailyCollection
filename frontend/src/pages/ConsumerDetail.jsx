@@ -89,10 +89,6 @@ const ConsumerDetail = () => {
     api
       .get(`/consumers/${consumerId}`)
       .then(({ data }) => {
-        console.log("CONSUMER DATA:", data);
-        console.log("CURRENT BILL:", data.currentBill);
-        console.log("MONTHLY AMOUNT:", data.monthlyAmount);
-
         setConsumer(data);
       })
       .catch((err) => setError(err.response?.data?.message || "Load nahi hua"));
@@ -508,16 +504,22 @@ const ConsumerDetail = () => {
   };
 
   const loadHistory = async () => {
-    if (showHistory) {
-      setShowHistory(false);
-      return;
-    }
     setBusy("history");
+    setError("");
+
     try {
       const { data } = await api.get(`/consumers/${consumerId}/history`);
-      setHistory(data);
+
+      console.log("HISTORY RESPONSE:", data);
+
+      setHistory({
+        bills: Array.isArray(data?.bills) ? data.bills : [],
+        visits: Array.isArray(data?.visits) ? data.visits : [],
+      });
+
       setShowHistory(true);
     } catch (err) {
+      console.error("HISTORY ERROR:", err);
       setError(err.response?.data?.message || "History load nahi hui");
     } finally {
       setBusy("");
@@ -1414,7 +1416,10 @@ const ConsumerDetail = () => {
 
                     <button
                       type="button"
-                      onClick={() => setActionDrawer("history")}
+                      onClick={async () => {
+                        setActionDrawer("history");
+                        await loadHistory();
+                      }}
                       className="flex w-full items-center justify-between rounded-xl px-4 py-3 text-left text-sm font-semibold hover:bg-slate-50"
                     >
                       Transaction History
