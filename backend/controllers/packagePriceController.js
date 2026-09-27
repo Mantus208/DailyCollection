@@ -43,7 +43,56 @@ const getEffectivePrice = (config, areaId) => {
 
   return null;
 };
+const normalizePackageType = (value) => {
+  const type = String(value || "")
+    .trim()
+    .toLowerCase();
 
+  if (type.includes("channel")) {
+    return "Channel";
+  }
+
+  return "Package";
+};
+
+const getConsumerPaytvItems = (consumer) => {
+  const paytv = consumer?.paytv || {};
+
+  let rawItems = [];
+
+  // Prefer complete live package list
+  if (Array.isArray(paytv.packages) && paytv.packages.length > 0) {
+    rawItems = paytv.packages;
+  } else {
+    // Fallback for older cached consumers
+    rawItems = [
+      ...(paytv.basicPackage ? [paytv.basicPackage] : []),
+
+      ...(Array.isArray(paytv.addons) ? paytv.addons : []),
+    ];
+  }
+
+  const map = new Map();
+
+  for (const item of rawItems) {
+    const name = String(item?.name || "").trim();
+
+    if (!name) continue;
+
+    const packageType = normalizePackageType(item?.type);
+
+    const key = makePackageKey(name, packageType);
+
+    if (!map.has(key)) {
+      map.set(key, {
+        packageName: name,
+        packageType,
+      });
+    }
+  }
+
+  return Array.from(map.values());
+};
 // Clean area overrides and remove duplicates
 const normalizeAreaOverrides = (areaOverrides = []) => {
   const map = new Map();
@@ -100,33 +149,127 @@ const getPackagePrices = async (req, res) => {
 
 const getPackageCatalog = async (req, res) => {
   try {
-    const catalog = await Consumer.aggregate([
-      {
-        $match: {
-          packageName: {
-            $exists: true,
-            $nin: ["", null],
-          },
-        },
-      },
-      {
-        $group: {
-          _id: {
-            packageName: "$packageName",
-            packageType: "$packageType",
-          },
-          consumerCount: {
-            $sum: 1,
-          },
-        },
-      },
-      {
-        $sort: {
-          "_id.packageName": 1,
-          "_id.packageType": 1,
-        },
-      },
-    ]);
+    // =====================================================
+    // LIVE PAYTV PACKAGE CATALOG
+    // Base Package + Add-on Package + Add-on Channel
+    // =====================================================
+
+    const consumers = await Consumer.find({})
+      .select(
+        "_id areaId packageName packageType " +
+          "paytv.basicPackage paytv.addons paytv.packages",
+      )
+      .lean();
+
+    const catalogMap = new Map();
+
+    const addCatalogItem = (packageName, packageType) => {
+      const name = String(packageName || "").trim();
+
+      if (!name) return;
+
+      const type = String(packageType || "Package").trim() || "Package";
+
+      const key = makePackageKey(name, type);
+
+      const existing = catalogMap.get(key);
+
+      if (existing) {
+        existing.consumerCount += 1;
+        return;
+      }
+
+      catalogMap.set(key, {
+        packageName: name,
+        packageType: type,
+        consumerCount: 1,
+      });
+    };
+
+    for (const consumer of consumers) {
+      const paytv = consumer.paytv || {};
+
+      // ===================================================
+      // BASE PACKAGE
+      // ===================================================
+
+      if (paytv.basicPackage?.name) {
+        addCatalogItem(paytv.basicPackage.name, "Package");
+      }
+
+      // ===================================================
+      // ALL PACKAGES
+      // Use only if available and avoid duplicate
+      // ===================================================
+
+      if (Array.isArray(paytv.packages)) {
+        for (const item of paytv.packages) {
+          if (!item?.name) continue;
+
+          const rawType = String(item.type || "")
+            .trim()
+            .toLowerCase();
+
+          let packageType = "Package";
+
+          if (rawType === "channel" || rawType.includes("channel")) {
+            packageType = "Channel";
+          }
+
+          addCatalogItem(item.name, packageType);
+        }
+      }
+
+      // ===================================================
+      // ADDONS
+      // Package / Channel dono support
+      // ===================================================
+
+      if (Array.isArray(paytv.addons)) {
+        for (const item of paytv.addons) {
+          if (!item?.name) continue;
+
+          const rawType = String(item.type || "")
+            .trim()
+            .toLowerCase();
+
+          const packageType =
+            rawType === "channel" || rawType.includes("channel")
+              ? "Channel"
+              : "Package";
+
+          addCatalogItem(item.name, packageType);
+        }
+      }
+
+      // ===================================================
+      // LEGACY FALLBACK
+      // Purane consumers ke liye
+      // ===================================================
+
+      if (
+        !paytv.basicPackage?.name &&
+        !paytv.addons?.length &&
+        !paytv.packages?.length &&
+        consumer.packageName
+      ) {
+        addCatalogItem(consumer.packageName, consumer.packageType || "Package");
+      }
+    }
+
+    const catalog = Array.from(catalogMap.values()).sort((a, b) => {
+      const nameCompare = a.packageName.localeCompare(b.packageName);
+
+      if (nameCompare !== 0) {
+        return nameCompare;
+      }
+
+      return a.packageType.localeCompare(b.packageType);
+    });
+
+    // =====================================================
+    // EXISTING PRICING CONFIG
+    // =====================================================
 
     const pricing = await PackagePrice.find({
       active: true,
@@ -142,23 +285,25 @@ const getPackageCatalog = async (req, res) => {
       pricingMap.set(key, item);
     }
 
-    const result = catalog.map((item) => {
-      const packageName = item._id.packageName;
-      const packageType = item._id.packageType || "Package";
+    // =====================================================
+    // FINAL RESULT
+    // =====================================================
 
-      const key = makePackageKey(packageName, packageType);
+    const result = catalog.map((item) => {
+      const key = makePackageKey(item.packageName, item.packageType);
 
       const config = pricingMap.get(key);
 
       return {
         _id: config?._id || null,
 
-        packageName,
-        packageType,
+        packageName: item.packageName,
+
+        packageType: item.packageType,
 
         consumerCount: item.consumerCount,
 
-        configured: !!config,
+        configured: Boolean(config),
 
         defaultPrice: config ? config.defaultPrice : null,
 
@@ -168,11 +313,11 @@ const getPackageCatalog = async (req, res) => {
       };
     });
 
-    res.json(result);
+    return res.json(result);
   } catch (error) {
     console.error("getPackageCatalog error:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       message: "Failed to load package catalog",
       error: error.message,
     });
@@ -366,7 +511,117 @@ const deletePackagePrice = async (req, res) => {
 // =====================================================
 // APPLY PACKAGE PRICE TO EXISTING CONSUMERS
 // =====================================================
+const calculateConsumerMonthlyAmount = (consumer, pricingMap) => {
+  const paytv = consumer?.paytv || {};
 
+  // Prefer the authoritative billable package list.
+  // Fallback to basic + addons if packages is missing.
+  let items = [];
+
+  if (Array.isArray(paytv.packages) && paytv.packages.length > 0) {
+    items = paytv.packages;
+  } else {
+    items = [
+      ...(paytv.basicPackage ? [paytv.basicPackage] : []),
+      ...(Array.isArray(paytv.addons) ? paytv.addons : []),
+    ];
+  }
+
+  if (!items.length) {
+    return {
+      success: false,
+      amount: null,
+      missing: [],
+    };
+  }
+
+  let total = 0;
+  const missing = [];
+
+  for (const item of items) {
+    const packageName = String(item?.name || "").trim();
+
+    if (!packageName) {
+      continue;
+    }
+
+    // IMPORTANT:
+    // Basic/Addon is packType, not packageType.
+    // For pricing:
+    // - Package = package
+    // - Channel = channel
+    let packageType;
+
+    const rawType = String(item?.type || "")
+      .trim()
+      .toLowerCase();
+
+    if (rawType === "addon" || rawType === "basic") {
+      packageType = "Package";
+    } else {
+      packageType = normalizePackageType(item?.type);
+    }
+
+    const key = makePackageKey(packageName, packageType);
+
+    const config = pricingMap.get(key);
+
+    console.log("💰 PACKAGE PRICE DEBUG:", {
+      consumerId: consumer?._id,
+      packageName,
+      originalType: item?.type,
+      packType: item?.packType,
+      resolvedPackageType: packageType,
+      key,
+      configuredPrice: config
+        ? getEffectivePrice(config, consumer.areaId)
+        : null,
+    });
+
+    if (!config) {
+      missing.push({
+        packageName,
+        packageType,
+      });
+      continue;
+    }
+
+    const price = getEffectivePrice(config, consumer.areaId);
+
+    if (
+      price === null ||
+      price === undefined ||
+      !Number.isFinite(Number(price))
+    ) {
+      missing.push({
+        packageName,
+        packageType,
+      });
+      continue;
+    }
+
+    total += Number(price);
+  }
+
+  const finalAmount = Math.round(total * 100) / 100;
+
+  console.log("💰 FINAL MONTHLY AMOUNT:", {
+    consumerId: consumer?._id,
+    items: items.map((item) => ({
+      name: item?.name,
+      type: item?.type,
+      packType: item?.packType,
+    })),
+    total: finalAmount,
+    missing,
+  });
+
+  return {
+    success: missing.length === 0,
+    amount: finalAmount,
+    missing,
+  };
+};
 const applyPackagePrice = async (req, res) => {
   try {
     const { id } = req.params;
@@ -385,18 +640,21 @@ const applyPackagePrice = async (req, res) => {
       });
     }
 
-    // Find all consumers belonging to this package
+    // =====================================================
+    // ALL CONSUMERS WITH PAYTV DATA
+    // =====================================================
+
     const consumers = await Consumer.find({
-      packageName: config.packageName,
-      packageType: config.packageType,
+      "paytv.customerId": {
+        $ne: null,
+      },
     })
-      .select("_id areaId monthlyAmount")
+      .select("_id areaId monthlyAmount paytv")
       .lean();
 
     if (!consumers.length) {
       return res.json({
-        message: "No existing consumers found for this package",
-
+        message: "No PayTV consumers found",
         matchedConsumers: 0,
         updatedConsumers: 0,
         updatedBills: 0,
@@ -404,31 +662,112 @@ const applyPackagePrice = async (req, res) => {
       });
     }
 
-    const consumerBulkOps = [];
+    // =====================================================
+    // LOAD ALL ACTIVE PRICING CONFIGURATIONS
+    // =====================================================
 
+    const pricingConfigs = await PackagePrice.find({
+      active: true,
+    }).lean();
+
+    const pricingMap = new Map();
+
+    for (const item of pricingConfigs) {
+      const key = makePackageKey(item.packageName, item.packageType);
+
+      pricingMap.set(key, item);
+    }
+
+    // =====================================================
+    // TARGET PACKAGE
+    // =====================================================
+
+    const targetKey = makePackageKey(config.packageName, config.packageType);
+
+    // =====================================================
+    // CALCULATE EACH CUSTOMER
+    // =====================================================
+
+    const consumerBulkOps = [];
     const priceMap = new Map();
 
+    let matchedConsumers = 0;
     let updatedConsumers = 0;
     let skippedConsumers = 0;
+    let incompletePricing = 0;
+
+    const missingPricingSet = new Set();
 
     for (const consumer of consumers) {
-      const effectivePrice = getEffectivePrice(config, consumer.areaId);
+      const paytvItems = getConsumerPaytvItems(consumer);
 
-      if (effectivePrice === null) {
-        skippedConsumers++;
+      if (!paytvItems.length) {
         continue;
       }
 
-      priceMap.set(String(consumer._id), effectivePrice);
+      // ---------------------------------------------------
+      // Is target package actually present?
+      // ---------------------------------------------------
+
+      const hasTarget = paytvItems.some((item) => {
+        const key = makePackageKey(item.packageName, item.packageType);
+
+        return key === targetKey;
+      });
+
+      if (!hasTarget) {
+        continue;
+      }
+
+      matchedConsumers++;
+
+      // ---------------------------------------------------
+      // BASE PACKAGE MUST HAVE PRICING
+      // ---------------------------------------------------
+
+      // ---------------------------------------------------
+      // CALCULATE COMPLETE PAYTV MONTHLY AMOUNT
+      // Base + Addon Packages + Channels
+      // ---------------------------------------------------
+
+      const calculation = calculateConsumerMonthlyAmount(consumer, pricingMap);
+      console.log("🔍 BILLING CALCULATION DEBUG:", {
+        consumerId: consumer._id,
+        paytvPackages: consumer?.paytv?.packages,
+        basicPackage: consumer?.paytv?.basicPackage,
+        addons: consumer?.paytv?.addons,
+        calculation,
+      });
+
+      if (!calculation.success) {
+        skippedConsumers++;
+        incompletePricing++;
+
+        for (const item of calculation.missing) {
+          missingPricingSet.add(`${item.packageName} [${item.packageType}]`);
+        }
+
+        console.log("⚠️ Pricing missing:", {
+          consumerId: consumer._id,
+          missing: calculation.missing,
+        });
+
+        continue;
+      }
+
+      const totalAmount = calculation.amount;
+
+      priceMap.set(String(consumer._id), totalAmount);
 
       consumerBulkOps.push({
         updateOne: {
           filter: {
             _id: consumer._id,
           },
+
           update: {
             $set: {
-              monthlyAmount: effectivePrice,
+              monthlyAmount: totalAmount,
             },
           },
         },
@@ -437,14 +776,17 @@ const applyPackagePrice = async (req, res) => {
       updatedConsumers++;
     }
 
-    // Update consumers
+    // =====================================================
+    // UPDATE CONSUMERS
+    // =====================================================
+
     if (consumerBulkOps.length > 0) {
       await Consumer.bulkWrite(consumerBulkOps);
     }
 
-    // =================================================
-    // CURRENT MONTH BILL UPDATE
-    // =================================================
+    // =====================================================
+    // UPDATE CURRENT MONTH UNPAID/DUE BILLS
+    // =====================================================
 
     const month = getCurrentMonth();
 
@@ -458,6 +800,9 @@ const applyPackagePrice = async (req, res) => {
           $in: consumerIds,
         },
         month,
+        manualAmountOverride: {
+          $ne: true,
+        },
       })
         .select("_id consumerId amount status paidDate")
         .lean();
@@ -465,14 +810,14 @@ const applyPackagePrice = async (req, res) => {
       const billBulkOps = [];
 
       for (const bill of bills) {
-        // NEVER MODIFY PAID BILL
+        // Paid bill ko touch nahi karna
         if (bill.paidDate || bill.status === "paid") {
           continue;
         }
 
-        const effectivePrice = priceMap.get(String(bill.consumerId));
+        const newAmount = priceMap.get(String(bill.consumerId));
 
-        if (effectivePrice === undefined) {
+        if (newAmount === undefined) {
           continue;
         }
 
@@ -481,9 +826,10 @@ const applyPackagePrice = async (req, res) => {
             filter: {
               _id: bill._id,
             },
+
             update: {
               $set: {
-                amount: effectivePrice,
+                amount: newAmount,
               },
             },
           },
@@ -497,25 +843,29 @@ const applyPackagePrice = async (req, res) => {
       }
     }
 
-    res.json({
+    return res.json({
       message: "Package pricing applied successfully",
 
       packageName: config.packageName,
+
       packageType: config.packageType,
 
-      matchedConsumers: consumers.length,
+      matchedConsumers,
 
       updatedConsumers,
 
       updatedBills,
 
       skippedConsumers,
+
+      incompletePricing,
     });
   } catch (error) {
     console.error("applyPackagePrice error:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       message: "Failed to apply package pricing",
+
       error: error.message,
     });
   }

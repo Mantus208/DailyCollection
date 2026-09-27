@@ -1,9 +1,57 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import api from "../api/axios";
 
 const formatDate = (d) => (d ? new Date(d).toLocaleDateString("en-IN") : "-");
 const formatDateTime = (d) => (d ? new Date(d).toLocaleString("en-IN") : "-");
+
+// =========================================================
+// PAYTV PREFETCH CACHE
+// =========================================================
+
+const livePaytvDataCache = new Map();
+const livePaytvPromiseCache = new Map();
+
+const preloadLivePaytv = (consumerId, force = false) => {
+  if (!consumerId) {
+    return Promise.resolve(null);
+  }
+
+  const key = String(consumerId);
+
+  // Already fetched data
+  if (!force && livePaytvDataCache.has(key)) {
+    return Promise.resolve(livePaytvDataCache.get(key));
+  }
+
+  // Same request already running
+  if (!force && livePaytvPromiseCache.has(key)) {
+    return livePaytvPromiseCache.get(key);
+  }
+
+  if (force) {
+    livePaytvDataCache.delete(key);
+    livePaytvPromiseCache.delete(key);
+  }
+
+  const request = api
+    .get(`/consumers/${key}/paytv-live`)
+    .then(({ data }) => {
+      livePaytvDataCache.set(key, data);
+      return data;
+    })
+    .catch((error) => {
+      livePaytvDataCache.delete(key);
+      throw error;
+    })
+    .finally(() => {
+      livePaytvPromiseCache.delete(key);
+    });
+
+  livePaytvPromiseCache.set(key, request);
+
+  return request;
+};
 
 const tomorrowStr = () => {
   const d = new Date();
@@ -45,6 +93,12 @@ const ConsumerDetail = () => {
   const navigate = useNavigate();
 
   const [consumer, setConsumer] = useState(null);
+
+  const [livePaytv, setLivePaytv] = useState(null);
+  const [livePaytvLoading, setLivePaytvLoading] = useState(false);
+  const [livePaytvError, setLivePaytvError] = useState("");
+  const livePaytvRequestRef = useRef(null);
+
   const [concessionAmount, setConcessionAmount] = useState("");
   const [concessionRemark, setConcessionRemark] = useState("");
   const [showConcessionForm, setShowConcessionForm] = useState(false);
@@ -76,6 +130,7 @@ const ConsumerDetail = () => {
   const [consumerSearch, setConsumerSearch] = useState("");
   const [consumerResults, setConsumerResults] = useState([]);
   const [consumerListLoading, setConsumerListLoading] = useState(false);
+  const [paytvPreloadingId, setPaytvPreloadingId] = useState("");
 
   const [stockItems, setStockItems] = useState([]);
   const [stockItemId, setStockItemId] = useState("");
@@ -93,7 +148,38 @@ const ConsumerDetail = () => {
       })
       .catch((err) => setError(err.response?.data?.message || "Load nahi hua"));
   };
+  const loadLivePaytv = async ({ force = false } = {}) => {
+    if (!consumerId) return;
 
+    const key = String(consumerId);
+
+    // ✅ Cache available = immediately show
+    if (!force && livePaytvDataCache.has(key)) {
+      setLivePaytv(livePaytvDataCache.get(key));
+      setLivePaytvError("");
+      setLivePaytvLoading(false);
+      return;
+    }
+
+    setLivePaytvLoading(true);
+    setLivePaytvError("");
+
+    try {
+      const data = await preloadLivePaytv(key, force);
+
+      setLivePaytv(data);
+    } catch (err) {
+      console.error("Live PayTV load error:", err);
+
+      setLivePaytv(null);
+
+      setLivePaytvError(
+        err.response?.data?.message || "Live PayTV information load nahi hui.",
+      );
+    } finally {
+      setLivePaytvLoading(false);
+    }
+  };
   const loadStockItems = async () => {
     try {
       const { data } = await api.get("/stock/items");
@@ -113,6 +199,7 @@ const ConsumerDetail = () => {
   useEffect(() => {
     load();
     loadStockItems();
+    loadLivePaytv();
   }, [consumerId]);
   useEffect(() => {
     const timer = setTimeout(async () => {
@@ -404,7 +491,41 @@ const ConsumerDetail = () => {
       setBusy("");
     }
   };
+  const handleMergeSeptemberHistory = async () => {
+    const confirmed = window.confirm(
+      "September ki split collection history ko ek single payment entry mein merge karna hai?\n\n" +
+        "Bill/payment amount ko touch nahi kiya jayega.\n" +
+        "Sirf Recent Activity clean hogi.",
+    );
 
+    if (!confirmed) return;
+
+    setBusy("mergeSeptemberHistory");
+    setError("");
+    setMessage("");
+
+    try {
+      const { data } = await api.put(
+        `/consumers/${consumerId}/merge-september-collection-history`,
+      );
+
+      console.log("MERGE SEPTEMBER HISTORY RESPONSE:", data);
+
+      await load();
+
+      setMessage(
+        `September collection ₹${data.totalAmount} ko single history entry mein merge kar diya gaya.`,
+      );
+
+      setActionDrawer(null);
+    } catch (err) {
+      setError(
+        err.response?.data?.message || "Collection history merge nahi hui",
+      );
+    } finally {
+      setBusy("");
+    }
+  };
   const handleDue = async () => {
     setBusy("due");
     setError("");
@@ -542,26 +663,51 @@ const ConsumerDetail = () => {
 
   const currentBillConcession = Number(bill?.concessionAmount ?? 0);
 
-  const currentBalance = Math.max(currentBillAmount - currentBillPaid, 0);
-
-  const manualPreviousDue = Number(consumer?.previousDue ?? 0);
-
-  const advanceAmount = Number(consumer?.advanceAmount ?? 0);
-
-  const totalOutstanding = Math.max(
-    manualPreviousDue + currentBalance - advanceAmount,
+  const currentBalance = Math.max(
+    currentBillAmount - currentBillPaid - currentBillConcession,
     0,
   );
 
-  /*
-   * IMPORTANT:
-   * bill null + amount 0 ko Paid nahi maana jayega.
-   */
-  const isPaid =
-    Boolean(bill) && currentBillAmount > 0 && totalOutstanding <= 0;
+  // Previous monthly bills
+  const previousBillsDue = Number(consumer?.previousBillsDue ?? 0);
 
-  // Existing code compatibility
+  // Manual previous due
+  const manualPreviousDue = Number(consumer?.previousDue ?? 0);
+
+  // Combined previous due
+  const totalPreviousDue = previousBillsDue + manualPreviousDue;
+
+  // Advance
+  const advanceAmount = Number(consumer?.advanceAmount ?? 0);
+
+  // Final total outstanding
+  const totalOutstanding = Math.max(
+    totalPreviousDue + currentBalance - advanceAmount,
+    0,
+  );
+
+  // Current month status
+  const currentMonthStatus =
+    currentBillAmount <= 0 ? "NO CHARGE" : currentBalance <= 0 ? "PAID" : "DUE";
+
+  // Used for Collect / Advance button
+  const isPaid = Boolean(bill) && totalOutstanding <= 0;
+
+  // Existing compatibility
   const balance = totalOutstanding;
+  const livePackages = Array.isArray(livePaytv?.package?.packages)
+    ? livePaytv.package.packages
+    : [];
+
+  const liveBasicPackage = livePaytv?.package?.name
+    ? livePaytv.package
+    : livePackages.find(
+        (item) => String(item?.packType || "").toLowerCase() === "basic",
+      );
+
+  const liveAddonPackages = livePackages.filter(
+    (item) => String(item?.packType || "").toLowerCase() === "addon",
+  );
 
   const selectedStockItem = stockItems.find(
     (item) => String(item._id) === String(stockItemId),
@@ -652,9 +798,13 @@ const ConsumerDetail = () => {
                     <button
                       key={c._id}
                       type="button"
-                      onClick={() =>
-                        navigate(`/area/${areaId}/consumer/${c._id}`)
-                      }
+                      onClick={() => {
+                        // PayTV background mein start
+                        void preloadLivePaytv(c._id);
+
+                        // Page immediately open
+                        navigate(`/area/${areaId}/consumer/${c._id}`);
+                      }}
                       className={`w-full border-b border-slate-100 px-4 py-3 text-left transition ${
                         selected ? "bg-blue-50" : "hover:bg-slate-50"
                       }`}
@@ -692,7 +842,13 @@ const ConsumerDetail = () => {
                           </p>
                         </div>
 
-                        <span className="text-slate-300">›</span>
+                        {paytvPreloadingId === c._id ? (
+                          <span className="shrink-0 text-[10px] font-semibold text-blue-600">
+                            Loading...
+                          </span>
+                        ) : (
+                          <span className="shrink-0 text-slate-300">›</span>
+                        )}
                       </div>
                     </button>
                   );
@@ -829,11 +985,11 @@ const ConsumerDetail = () => {
                     </span>
                   </div>
 
-                  {manualPreviousDue > 0 && (
+                  {totalPreviousDue > 0 && (
                     <div>
-                      <span className="text-slate-400">Previous</span>
+                      <span className="text-slate-400">Previous Due</span>
                       <span className="ml-1.5 font-bold text-blue-600">
-                        ₹{manualPreviousDue}
+                        ₹{totalPreviousDue}
                       </span>
                     </div>
                   )}
@@ -846,6 +1002,13 @@ const ConsumerDetail = () => {
                       </span>
                     </div>
                   )}
+
+                  <div>
+                    <span className="text-slate-400">Balance</span>
+                    <span className="ml-1.5 font-bold text-amber-600">
+                      ₹{totalOutstanding}
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -854,7 +1017,7 @@ const ConsumerDetail = () => {
           {/* =======================================================
             CLEAN LEDGER
         ======================================================== */}
-          <div className="px-3 py-4 pb-24 md:px-6 md:py-5">
+          <div className="px-3 py-4 pb-40 md:px-6 md:py-5 md:pb-36">
             {message && (
               <div className="mb-3 rounded-xl bg-emerald-50 px-4 py-3 text-xs font-semibold text-emerald-700">
                 {message}
@@ -879,35 +1042,229 @@ const ConsumerDetail = () => {
 
               {/* Current Bill */}
               <div className="flex justify-start">
-                <div className="max-w-[82%] rounded-2xl rounded-bl-md bg-white px-4 py-3 shadow-sm ring-1 ring-slate-200">
-                  <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">
-                    Monthly Bill
-                  </p>
+                <div className="w-full max-w-md rounded-2xl bg-white px-4 py-4 shadow-sm ring-1 ring-slate-200">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                        Monthly Bill
+                      </p>
 
-                  <p className="mt-1 text-xl font-extrabold text-slate-900">
-                    ₹{currentBillAmount}
-                  </p>
+                      <p className="mt-1 text-2xl font-extrabold text-slate-900">
+                        ₹{currentBillAmount}
+                      </p>
+                    </div>
 
-                  <div className="mt-1 flex items-center gap-2">
                     <span
-                      className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${
-                        isPaid
+                      className={`rounded-full px-2.5 py-1 text-[9px] font-bold ${
+                        currentMonthStatus === "PAID"
                           ? "bg-emerald-50 text-emerald-700"
-                          : "bg-amber-50 text-amber-700"
+                          : currentMonthStatus === "NO CHARGE"
+                            ? "bg-slate-100 text-slate-600"
+                            : "bg-amber-50 text-amber-700"
                       }`}
                     >
-                      {isPaid ? "PAID" : "DUE"}
+                      {currentMonthStatus}
                     </span>
+                  </div>
+
+                  <div className="mt-4 border-t border-slate-100 pt-3">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-slate-400">Current Month Bill</span>
+
+                      <span className="font-bold text-slate-800">
+                        ₹{currentBillAmount}
+                      </span>
+                    </div>
+
+                    <div className="mt-2 flex items-center justify-between text-xs">
+                      <span className="text-slate-400">Paid</span>
+
+                      <span className="font-bold text-emerald-600">
+                        ₹{currentBillPaid}
+                      </span>
+                    </div>
 
                     {currentBillConcession > 0 && (
-                      <span className="text-[9px] font-semibold text-orange-600">
-                        Concession ₹{currentBillConcession}
-                      </span>
+                      <div className="mt-2 flex items-center justify-between text-xs">
+                        <span className="text-slate-400">Concession</span>
+
+                        <span className="font-bold text-orange-600">
+                          ₹{currentBillConcession}
+                        </span>
+                      </div>
                     )}
+
+                    <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3">
+                      <span className="font-semibold text-slate-600">
+                        Current Balance
+                      </span>
+
+                      <span className="text-lg font-extrabold text-amber-600">
+                        ₹{currentBalance}
+                      </span>
+                    </div>
                   </div>
                 </div>
               </div>
+              {/* Outstanding Breakdown */}
+              <div className="mt-4">
+                <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4 shadow-sm">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                        Outstanding Breakdown
+                      </p>
 
+                      <p className="mt-0.5 text-[11px] text-slate-500">
+                        Total payable amount ka clear breakup
+                      </p>
+                    </div>
+
+                    <span className="text-xl font-extrabold text-amber-600">
+                      ₹{totalOutstanding}
+                    </span>
+                  </div>
+
+                  <div className="mt-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-slate-500">
+                        Current Month Bill
+                      </span>
+
+                      <span className="text-sm font-bold text-slate-800">
+                        ₹{currentBillAmount}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-slate-500">
+                        Previous Monthly Due
+                      </span>
+
+                      <span className="text-sm font-bold text-blue-600">
+                        ₹{previousBillsDue}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-slate-500">
+                        Manual Previous Due
+                      </span>
+
+                      <span className="text-sm font-bold text-blue-600">
+                        ₹{manualPreviousDue}
+                      </span>
+                    </div>
+
+                    {advanceAmount > 0 && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-slate-500">
+                          Advance Adjusted
+                        </span>
+
+                        <span className="text-sm font-bold text-indigo-600">
+                          - ₹{advanceAmount}
+                        </span>
+                      </div>
+                    )}
+
+                    <div className="border-t border-slate-200 pt-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-extrabold text-slate-800">
+                          Total Outstanding
+                        </span>
+
+                        <span className="text-xl font-extrabold text-amber-600">
+                          ₹{totalOutstanding}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              {/* PayTV Package Details */}
+              {livePackages.length > 0 && (
+                <div className="mt-4">
+                  <div className="rounded-2xl border border-blue-100 bg-white px-4 py-4 shadow-sm">
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-blue-500">
+                        Live PayTV Package Details
+                      </p>
+
+                      <p className="mt-0.5 text-[11px] text-slate-500">
+                        Current PayTV subscription details
+                      </p>
+                    </div>
+
+                    <div className="mt-4 space-y-2">
+                      {livePackages.map((item, index) => {
+                        const isBasic =
+                          String(item?.packType || "").toLowerCase() ===
+                          "basic";
+
+                        return (
+                          <div
+                            key={`${item?.name || "package"}-${index}`}
+                            className={`rounded-xl px-3 py-3 ${
+                              isBasic ? "bg-blue-50" : "bg-slate-50"
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="text-xs font-bold text-slate-800">
+                                  {item?.name || "-"}
+                                </p>
+
+                                <div className="mt-1 flex flex-wrap gap-2">
+                                  <span className="rounded-full bg-white px-2 py-0.5 text-[9px] font-semibold text-slate-500">
+                                    {isBasic ? "Base Package" : "Add-on"}
+                                  </span>
+
+                                  {item?.type && (
+                                    <span className="rounded-full bg-white px-2 py-0.5 text-[9px] font-semibold text-slate-500">
+                                      {item.type}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+
+                              <p className="shrink-0 text-sm font-extrabold text-slate-900">
+                                ₹{Number(item?.price || 0).toFixed(2)}
+                              </p>
+                            </div>
+
+                            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-slate-400">
+                              {item?.startDate && (
+                                <span>Start: {formatDate(item.startDate)}</span>
+                              )}
+
+                              {item?.endDate && (
+                                <span>Expiry: {formatDate(item.endDate)}</span>
+                              )}
+
+                              {item?.channelCount > 0 && (
+                                <span>Channels: {item.channelCount}</span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div className="mt-3 rounded-xl bg-amber-50 px-3 py-2">
+                      <p className="text-[10px] font-semibold text-amber-700">
+                        Note
+                      </p>
+
+                      <p className="mt-0.5 text-[10px] leading-4 text-amber-600">
+                        Upar dikhaya gaya price PayTV reference price hai.
+                        Customer ka local bill Package Pricing ke configured
+                        amount se calculate hota hai.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
               {/* Payment */}
               {currentBillPaid > 0 && (
                 <div className="mt-3 flex justify-end">
@@ -932,7 +1289,7 @@ const ConsumerDetail = () => {
               )}
 
               {/* Previous Due */}
-              {manualPreviousDue > 0 && (
+              {totalPreviousDue > 0 && (
                 <div className="mt-3 flex justify-start">
                   <div className="rounded-2xl rounded-bl-md bg-blue-50 px-4 py-3">
                     <p className="text-[10px] font-bold uppercase tracking-wide text-blue-600">
@@ -940,8 +1297,30 @@ const ConsumerDetail = () => {
                     </p>
 
                     <p className="mt-1 text-lg font-extrabold text-blue-700">
-                      ₹{manualPreviousDue}
+                      ₹{totalPreviousDue}
                     </p>
+
+                    <div className="mt-2 space-y-1 border-t border-blue-100 pt-2 text-[10px]">
+                      <div className="flex justify-between gap-6">
+                        <span className="text-blue-500">
+                          Previous Monthly Bills
+                        </span>
+
+                        <span className="font-bold text-blue-700">
+                          ₹{previousBillsDue}
+                        </span>
+                      </div>
+
+                      <div className="flex justify-between gap-6">
+                        <span className="text-blue-500">
+                          Manual Previous Due
+                        </span>
+
+                        <span className="font-bold text-blue-700">
+                          ₹{manualPreviousDue}
+                        </span>
+                      </div>
+                    </div>
                   </div>
                 </div>
               )}
@@ -1362,7 +1741,9 @@ const ConsumerDetail = () => {
                   <div className="space-y-1 p-3">
                     <button
                       type="button"
-                      onClick={() => setActionDrawer("info")}
+                      onClick={() => {
+                        setActionDrawer("info");
+                      }}
                       className="flex w-full items-center justify-between rounded-xl px-4 py-3 text-left text-sm font-semibold hover:bg-slate-50"
                     >
                       Customer Information
@@ -1377,7 +1758,58 @@ const ConsumerDetail = () => {
                       Edit Amount
                       <span>›</span>
                     </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const confirmed = window.confirm(
+                          "PRE-START BILLING RESET\n\n" +
+                            "August aur usse pehle ke MonthlyBill records delete honge.\n" +
+                            "September ki collection current September bill mein re-allocate hogi.\n\n" +
+                            "Kya aap continue karna chahte hain?",
+                        );
 
+                        if (!confirmed) return;
+
+                        try {
+                          setBusy("resetPreStart");
+
+                          const { data } = await api.put(
+                            `/consumers/${consumerId}/reset-prestart-billing`,
+                          );
+
+                          console.log(
+                            "RESET PRE-START BILLING RESPONSE:",
+                            data,
+                          );
+
+                          setMessage(
+                            `Pre-start billing clear ho gaya. ` +
+                              `September collection ₹${data.septemberCollected} ` +
+                              `current bill mein adjust hua.`,
+                          );
+
+                          await load();
+                          setActionDrawer(null);
+                        } catch (err) {
+                          setError(
+                            err.response?.data?.message ||
+                              "Pre-start billing reset nahi hua",
+                          );
+                        } finally {
+                          setBusy("");
+                        }
+                      }}
+                      disabled={busy === "resetPreStart"}
+                      className="flex w-full items-center justify-between rounded-xl px-4 py-3 text-left text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50"
+                    >
+                      <span>
+                        {busy === "resetPreStart"
+                          ? "Resetting..."
+                          : "Reset Pre-Start Billing"}
+                      </span>
+
+                      <span>↻</span>
+                    </button>
                     <button
                       type="button"
                       onClick={handleSetPreviousDue}
@@ -1425,7 +1857,20 @@ const ConsumerDetail = () => {
                       Transaction History
                       <span>›</span>
                     </button>
+                    <button
+                      type="button"
+                      onClick={handleMergeSeptemberHistory}
+                      disabled={busy === "mergeSeptemberHistory"}
+                      className="flex w-full items-center justify-between rounded-xl px-4 py-3 text-left text-sm font-semibold text-blue-600 hover:bg-blue-50 disabled:opacity-50"
+                    >
+                      <span>
+                        {busy === "mergeSeptemberHistory"
+                          ? "Merging..."
+                          : "Merge September Collection"}
+                      </span>
 
+                      <span>↔</span>
+                    </button>
                     {isPaid && (
                       <>
                         <div className="my-2 border-t border-slate-100" />
@@ -1477,24 +1922,146 @@ const ConsumerDetail = () => {
                   CUSTOMER INFO
               ================================================== */}
                 {actionDrawer === "info" && (
-                  <div className="grid grid-cols-2 gap-2 p-4">
-                    <Field label="Address" value={consumer.address} />
+                  <div className="p-4">
+                    {livePaytvLoading ? (
+                      <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-4 text-center">
+                        <p className="text-sm font-semibold text-blue-700">
+                          Live PayTV information load ho rahi hai...
+                        </p>
 
-                    <Field label="Mobile" value={consumer.mobile} />
+                        <p className="mt-1 text-[10px] text-blue-500">
+                          Please wait
+                        </p>
+                      </div>
+                    ) : livePaytvError ? (
+                      <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-4">
+                        <p className="text-xs font-bold text-red-700">
+                          Live PayTV data unavailable
+                        </p>
 
-                    <Field label="STB No" value={consumer.stbNo} />
+                        <p className="mt-1 text-[10px] text-red-600">
+                          {livePaytvError}
+                        </p>
 
-                    <Field label="VC No" value={consumer.vcNo} />
+                        <button
+                          type="button"
+                          onClick={() => loadLivePaytv({ force: true })}
+                          className="mt-3 rounded-lg bg-red-600 px-3 py-2 text-xs font-bold text-white"
+                        >
+                          Retry
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="mb-3 flex items-center justify-between">
+                          <div>
+                            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                              PayTV Live Information
+                            </p>
 
-                    <Field
-                      label="Last Package"
-                      value={formatDate(consumer.lastPackageDate)}
-                    />
+                            <p className="mt-0.5 text-[10px] text-emerald-600">
+                              ● Live
+                            </p>
+                          </div>
 
-                    <Field
-                      label="Expiry"
-                      value={formatDate(consumer.expiryDate)}
-                    />
+                          <button
+                            type="button"
+                            onClick={() => loadLivePaytv({ force: true })}
+                            disabled={livePaytvLoading}
+                            className="rounded-lg bg-slate-100 px-3 py-2 text-[10px] font-bold text-slate-600 hover:bg-slate-200 disabled:opacity-50"
+                          >
+                            {livePaytvLoading ? "Refreshing..." : "↻ Refresh"}
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2">
+                          <Field
+                            label="Address"
+                            value={
+                              [
+                                livePaytv?.address?.address1,
+                                livePaytv?.address?.address2,
+                                livePaytv?.address?.address3,
+                                livePaytv?.address?.area?.name,
+                                livePaytv?.address?.city?.name,
+                                livePaytv?.address?.postCode,
+                              ]
+                                .filter(Boolean)
+                                .join(", ") || "-"
+                            }
+                          />
+
+                          <Field
+                            label="Mobile"
+                            value={livePaytv?.consumer?.mobile || "-"}
+                          />
+
+                          <Field
+                            label="STB No"
+                            value={livePaytv?.hardware?.stbNo || "-"}
+                          />
+
+                          <Field
+                            label="VC No"
+                            value={livePaytv?.hardware?.vcNo || "-"}
+                          />
+
+                          <Field
+                            label="Package"
+                            value={livePaytv?.package?.name || "-"}
+                          />
+
+                          <Field
+                            label="Expiry"
+                            value={
+                              livePaytv?.package?.expiryDate
+                                ? formatDate(livePaytv.package.expiryDate)
+                                : "-"
+                            }
+                          />
+
+                          <Field
+                            label="Start Date"
+                            value={
+                              livePaytv?.package?.startDate
+                                ? formatDate(livePaytv.package.startDate)
+                                : "-"
+                            }
+                          />
+
+                          <Field
+                            label="Price"
+                            value={
+                              livePaytv?.package?.price != null
+                                ? `₹${livePaytv.package.price}`
+                                : "-"
+                            }
+                          />
+                        </div>
+
+                        <div className="mt-3 rounded-xl bg-slate-50 px-3 py-2">
+                          <p className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">
+                            Live fetched
+                          </p>
+
+                          <p className="mt-0.5 text-[10px] font-semibold text-slate-600">
+                            {formatDateTime(livePaytv?.fetchedAt)}
+                          </p>
+                        </div>
+
+                        <div className="mt-2 rounded-xl bg-blue-50 px-3 py-2">
+                          <p className="text-[9px] font-semibold uppercase tracking-wide text-blue-400">
+                            PayTV Mapping
+                          </p>
+
+                          <p className="mt-0.5 text-[10px] font-semibold text-blue-700">
+                            Franchisee: {livePaytv?.paytv?.franchiseeId || "-"}
+                            {" • "}
+                            Area: {livePaytv?.paytv?.areaId || "-"}
+                          </p>
+                        </div>
+                      </>
+                    )}
                   </div>
                 )}
 

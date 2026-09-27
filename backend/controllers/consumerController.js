@@ -1,9 +1,470 @@
 const Consumer = require("../models/Consumer");
 const MonthlyBill = require("../models/MonthlyBill");
 const VisitLog = require("../models/VisitLog");
+const Area = require("../models/Area");
 const { getCurrentMonth } = require("../utils/dateHelpers");
 const { logActivity } = require("../utils/logActivity");
 
+const {
+  getLiveSubscriber,
+  getLiveSubscriberByEncodedId,
+  getLiveSubscriberAddress,
+  getLiveHardware,
+  getLiveBill,
+  switchPaytvFranchise,
+} = require("../utils/paytvClient");
+const getConsumerPaytvLive = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const consumer = await Consumer.findById(id)
+      .select("consumerId name paytv areaId")
+      .lean();
+
+    if (!consumer) {
+      return res.status(404).json({
+        message: "Consumer nahi mila",
+      });
+    }
+
+    if (!consumer.consumerId) {
+      return res.status(400).json({
+        message: "Consumer ID missing hai",
+      });
+    }
+
+    // =========================================================
+    // 1. LOCAL AREA MAPPING
+    // =========================================================
+
+    const area = await Area.findById(consumer.areaId)
+      .select("name paytvCompanyId paytvFranchiseeId paytvAreaId")
+      .lean();
+
+    if (!area) {
+      return res.status(400).json({
+        message: "Consumer ka local Area mapped nahi hai.",
+      });
+    }
+
+    const companyId =
+      Number(area.paytvCompanyId) ||
+      Number(consumer.paytv?.companyId) ||
+      Number(process.env.PAYTV_COMPANY_ID || 1);
+
+    const franchiseId =
+      Number(area.paytvFranchiseeId) ||
+      Number(consumer.paytv?.franchiseeId) ||
+      null;
+
+    const paytvAreaId =
+      Number(area.paytvAreaId) || Number(consumer.paytv?.areaId) || null;
+
+    if (!franchiseId) {
+      return res.status(400).json({
+        message: `Area "${area.name}" ka PayTV Franchise mapped nahi hai.`,
+      });
+    }
+
+    console.log(
+      `📺 Live PayTV fetch: ${consumer.consumerId} | area=${area.name} | company=${companyId} | franchise=${franchiseId} | paytvArea=${paytvAreaId || "not-set"}`,
+    );
+
+    // =========================================================
+    // 2. CORRECT PAYTV FRANCHISE SESSION
+    // =========================================================
+
+    await switchPaytvFranchise(franchiseId);
+
+    console.log("✅ PayTV franchise selected:", {
+      area: area.name,
+      companyId,
+      franchiseId,
+      paytvAreaId,
+    });
+
+    // =========================================================
+    // 3. CUSTOMER RESOLUTION
+    //
+    // First time:
+    //   Consumer ID -> search ONLY inside mapped franchise
+    //
+    // Next time:
+    //   Saved customerId -> direct GeneralInfo
+    //   No subscriber search
+    // =========================================================
+
+    let live = null;
+
+    const cachedCustomerId = Number(consumer.paytv?.customerId) || null;
+
+    if (cachedCustomerId) {
+      // =====================================================
+      // CACHE HIT
+      // Subscriber search + GeneralInfo dono SKIP
+      // =====================================================
+
+      console.log(
+        `📺 CACHE HIT: ${consumer.consumerId} → customerId=${cachedCustomerId}`,
+      );
+
+      const encodedId = Buffer.from(String(cachedCustomerId), "utf8").toString(
+        "base64",
+      );
+
+      live = {
+        found: true,
+
+        customerId: cachedCustomerId,
+
+        encodedId,
+
+        consumerId: consumer.consumerId,
+
+        companyId,
+
+        franchiseId,
+
+        areaId: paytvAreaId,
+
+        name: consumer.name || "",
+
+        mobile: "",
+
+        active: true,
+
+        prepaid: false,
+
+        hardwareUrl: null,
+      };
+    } else {
+      // =====================================================
+      // FIRST TIME ONLY
+      // Search ONLY mapped franchise
+      // =====================================================
+
+      console.log(
+        `📺 FIRST SEARCH: ${consumer.consumerId} | franchise=${franchiseId}`,
+      );
+
+      live = await getLiveSubscriber(consumer.consumerId, {
+        companyId,
+        franchiseId,
+        areaId: paytvAreaId,
+      });
+
+      if (!live?.found) {
+        return res.status(404).json({
+          message: "Mapped PayTV Franchise mein customer nahi mila.",
+          consumerId: consumer.consumerId,
+          area: area.name,
+          franchiseId,
+        });
+      }
+
+      // First successful lookup ke baad cache
+      await Consumer.updateOne(
+        { _id: consumer._id },
+        {
+          $set: {
+            "paytv.companyId": companyId,
+            "paytv.franchiseeId": franchiseId,
+            "paytv.areaId": paytvAreaId,
+
+            "paytv.customerId": Number(live.customerId) || null,
+
+            "paytv.encodedId": live.encodedId || "",
+
+            "paytv.name": live.name || consumer.name || "",
+
+            "paytv.mobile": live.mobile || "",
+
+            "paytv.status": live.active ? "active" : "inactive",
+
+            "paytv.stbNo": hardware?.stbNo || "",
+
+            "paytv.vcNo": hardware?.vcNo || "",
+
+            "paytv.basicPackage": hardware?.basicPackage || null,
+
+            "paytv.addons": hardware?.addons || [],
+
+            "paytv.packages": hardware?.packages || [],
+
+            "paytv.lastFetchedAt": new Date(),
+
+            "paytv.fetchStatus": "live",
+
+            "paytv.fetchError": "",
+          },
+        },
+      );
+
+      console.log(`✅ First-time PayTV customer cached: ${live.customerId}`);
+    }
+
+    if (!live?.found) {
+      return res.status(404).json({
+        message: "Mapped PayTV Franchise mein customer nahi mila.",
+        consumerId: consumer.consumerId,
+        area: area.name,
+        franchiseId,
+      });
+    }
+
+    // =========================================================
+    // 4. AREA MAPPING = AUTHORITATIVE FRANCHISE
+    // =========================================================
+
+    const resolvedFranchiseId = franchiseId;
+
+    console.log("📺 RESOLVED PAYTV CONTEXT:", {
+      companyId,
+      localAreaId: consumer.areaId,
+      areaName: area.name,
+      paytvAreaId,
+      franchiseId: resolvedFranchiseId,
+      customerId: live.customerId,
+      consumerId: live.consumerId || consumer.consumerId,
+    });
+
+    // =========================================================
+    // 5. CACHE CONSUMER PAYTV MAPPING
+    // =========================================================
+
+    await Consumer.updateOne(
+      { _id: consumer._id },
+      {
+        $set: {
+          "paytv.companyId": companyId,
+
+          "paytv.franchiseeId": resolvedFranchiseId,
+
+          "paytv.areaId": paytvAreaId,
+
+          "paytv.customerId": Number(live.customerId) || null,
+        },
+      },
+    );
+
+    console.log("✅ PayTV consumer mapping cached:", {
+      consumerId: consumer.consumerId,
+      companyId,
+      franchiseId: resolvedFranchiseId,
+      paytvAreaId,
+      customerId: Number(live.customerId) || null,
+    });
+
+    // =========================================================
+    // 6. LIVE HARDWARE + PACKAGE
+    // =========================================================
+
+    let hardware = {
+      found: false,
+      hardwareId: null,
+      stbNo: "",
+      vcNo: "",
+      basicPackage: null,
+      addons: [],
+      packages: [],
+    };
+
+    try {
+      hardware = await getLiveHardware(live.customerId, {
+        hardwareUrl: live.hardwareUrl,
+        encodedId: live.encodedId,
+      });
+    } catch (error) {
+      console.error("📺 Live hardware error:", error.message);
+    }
+
+    // =========================================================
+    // SAVE LIVE PAYTV HARDWARE + PACKAGE CACHE
+    // =========================================================
+
+    await Consumer.updateOne(
+      { _id: consumer._id },
+      {
+        $set: {
+          "paytv.companyId": companyId,
+          "paytv.franchiseeId": franchiseId,
+          "paytv.areaId": paytvAreaId,
+
+          "paytv.customerId": Number(live.customerId) || null,
+
+          "paytv.encodedId": live.encodedId || "",
+
+          "paytv.name": live.name || consumer.name || "",
+
+          "paytv.mobile": live.mobile || "",
+
+          "paytv.status": live.active ? "active" : "inactive",
+
+          "paytv.stbNo": hardware?.stbNo || "",
+
+          "paytv.vcNo": hardware?.vcNo || "",
+
+          "paytv.basicPackage": hardware?.basicPackage || null,
+
+          "paytv.addons": Array.isArray(hardware?.addons)
+            ? hardware.addons
+            : [],
+
+          "paytv.packages": Array.isArray(hardware?.packages)
+            ? hardware.packages
+            : [],
+
+          "paytv.lastFetchedAt": new Date(),
+
+          "paytv.fetchStatus": hardware?.found ? "live" : "error",
+
+          "paytv.fetchError": hardware?.found
+            ? ""
+            : "Live hardware/package data not found",
+        },
+      },
+    );
+
+    console.log("✅ LIVE PAYTV CACHE SAVED:", {
+      consumerId: consumer.consumerId,
+      customerId: live.customerId,
+      basicPackage: hardware?.basicPackage?.name || null,
+      addonCount: Array.isArray(hardware?.addons) ? hardware.addons.length : 0,
+      totalPackages: Array.isArray(hardware?.packages)
+        ? hardware.packages.length
+        : 0,
+    });
+    // =========================================================
+    // 7. LIVE BILL
+    // =========================================================
+
+    // let bill = null;
+
+    // try {
+    //   if (live.customerId) {
+    //     bill = await getLiveBill(live.customerId, consumer.consumerId, {
+    //       companyId,
+    //       franchiseId: resolvedFranchiseId,
+    //     });
+    //   }
+    // } catch (error) {
+    //   console.error("📺 Live bill fetch failed:", error.message);
+    // }
+
+    // =========================================================
+    // 8. FINAL RESPONSE
+    // =========================================================
+
+    return res.json({
+      source: "paytv-live",
+
+      fetchedAt: new Date(),
+
+      consumer: {
+        consumerId: live.consumerId || consumer.consumerId,
+
+        customerId: live.customerId || null,
+
+        encodedId: live.encodedId || "",
+
+        name: live.name || consumer.name || "",
+
+        mobile: live.mobile === "0" ? "" : live.mobile || "",
+
+        status: live.active ? "active" : "inactive",
+
+        prepaid: Boolean(live.prepaid),
+      },
+
+      paytv: {
+        companyId,
+
+        franchiseeId: resolvedFranchiseId,
+
+        parentFranchiseeId: live.parentFranchiseeId || null,
+
+        areaId: paytvAreaId || live.areaId || null,
+      },
+
+      address: {
+        address1: live.address1 || "",
+
+        address2: live.address2 || "",
+
+        address3: live.address3 || "",
+
+        postCode: live.postCode || "",
+
+        country: {
+          id: null,
+          name: "",
+        },
+
+        state: {
+          id: null,
+          name: "",
+        },
+
+        zone: {
+          id: null,
+          name: "",
+        },
+
+        city: {
+          id: null,
+          name: "",
+        },
+
+        area: {
+          id: paytvAreaId || null,
+          name: area.name || "",
+        },
+      },
+
+      hardware: {
+        source: "paytv-live-hardware",
+
+        hardwareId: hardware?.hardwareId || null,
+
+        stbNo: hardware?.stbNo || "",
+
+        vcNo: hardware?.vcNo || "",
+
+        type: hardware?.basicPackage?.type || "",
+
+        basicPackage: hardware?.basicPackage || null,
+
+        addons: hardware?.addons || [],
+
+        packages: hardware?.packages || [],
+      },
+
+      package: {
+        lastPackageDate: hardware?.basicPackage?.startDate || null,
+        name: hardware?.basicPackage?.name || "",
+        type: hardware?.basicPackage?.type || "",
+        startDate: hardware?.basicPackage?.startDate || null,
+        expiryDate: hardware?.basicPackage?.endDate || null,
+        price: hardware?.basicPackage?.price ?? null,
+        channelCount: hardware?.basicPackage?.channelCount ?? 0,
+        plan: hardware?.basicPackage?.plan || "",
+        packages: hardware?.packages || [],
+        addons: hardware?.addons || [],
+      },
+
+      bill: null,
+    });
+  } catch (error) {
+    console.error("getConsumerPaytvLive error:", error);
+
+    return res.status(500).json({
+      message:
+        error.response?.data?.message ||
+        error.message ||
+        "Live PayTV data fetch nahi hua",
+    });
+  }
+};
 const createConsumer = async (req, res) => {
   try {
     const {
@@ -63,7 +524,64 @@ const createConsumer = async (req, res) => {
       .json({ message: "Server error", error: error.message });
   }
 };
+const getLivePaytv = async (req, res) => {
+  try {
+    const consumer = await Consumer.findById(req.params.id).select(
+      "consumerId name paytv",
+    );
 
+    if (!consumer) {
+      return res.status(404).json({
+        message: "Consumer nahi mila",
+      });
+    }
+
+    const companyId = Number(consumer.paytv?.companyId) || 1;
+
+    const franchiseId = Number(consumer.paytv?.franchiseeId) || 10027;
+
+    console.log(
+      `📡 PayTV LIVE fetch: ${consumer.consumerId} | company=${companyId} | franchise=${franchiseId}`,
+    );
+
+    const live = await getLiveSubscriberFull(consumer.consumerId, {
+      companyId,
+      franchiseId,
+    });
+
+    return res.json({
+      success: true,
+      source: "paytv-live",
+      fetchedAt: new Date(),
+      consumerId: consumer.consumerId,
+
+      live: {
+        ...live,
+
+        // Hardware existing PayTV sync se
+        hardware: {
+          source: "paytv-sync",
+          stbNo: consumer.paytv?.stbNo || "",
+          vcNo: consumer.paytv?.vcNo || "",
+          basicPackage: consumer.paytv?.basicPackage || null,
+          addons: consumer.paytv?.addons || [],
+          packages: consumer.paytv?.packages || [],
+          fetchStatus: consumer.paytv?.fetchStatus || "never",
+          lastFetchedAt: consumer.paytv?.lastFetchedAt || null,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("getLivePaytv error:", error);
+
+    return res.status(502).json({
+      success: false,
+      source: "paytv-live",
+      message: "PayTV se live data fetch nahi ho paya",
+      error: error.message,
+    });
+  }
+};
 const getUnmatchedAreaGroups = async (req, res) => {
   try {
     const groups = await Consumer.aggregate([
@@ -163,10 +681,18 @@ const getConsumerDetail = async (req, res) => {
       "areaId",
       "name",
     );
-    if (!consumer)
-      return res.status(404).json({ message: "Consumer nahi mila" });
+
+    if (!consumer) {
+      return res.status(404).json({
+        message: "Consumer nahi mila",
+      });
+    }
 
     const month = getCurrentMonth();
+
+    // -----------------------------------------
+    // CURRENT MONTH BILL
+    // -----------------------------------------
     let currentBill = await MonthlyBill.findOne({
       consumerId: consumer._id,
       month,
@@ -175,7 +701,6 @@ const getConsumerDetail = async (req, res) => {
     // -----------------------------------------
     // ADVANCE AUTO ADJUST
     // -----------------------------------------
-
     if (
       currentBill &&
       Number(consumer.advanceAmount || 0) > 0 &&
@@ -213,15 +738,85 @@ const getConsumerDetail = async (req, res) => {
       }
     }
 
+    // -----------------------------------------
+    // PREVIOUS MONTH UNPAID / DUE BILLS
+    // -----------------------------------------
+    const previousBills = await MonthlyBill.find({
+      consumerId: consumer._id,
+      month: { $lt: month },
+    })
+      .sort({
+        month: 1,
+        createdAt: 1,
+      })
+      .lean();
+
+    let previousBillsDue = 0;
+
+    for (const oldBill of previousBills) {
+      const oldAmount = Number(oldBill.amount || 0);
+
+      const oldPaid = Number(oldBill.amountPaid || 0);
+
+      const oldConcession = Number(oldBill.concessionAmount || 0);
+
+      const oldBalance = Math.max(oldAmount - oldPaid - oldConcession, 0);
+
+      previousBillsDue += oldBalance;
+    }
+
+    // -----------------------------------------
+    // MANUAL PREVIOUS DUE
+    // -----------------------------------------
+    const manualPreviousDue = Number(consumer.previousDue || 0);
+
+    // -----------------------------------------
+    // CURRENT BILL BALANCE
+    // -----------------------------------------
+    const currentBillAmount = Number(currentBill?.amount || 0);
+
+    const currentBillPaid = Number(currentBill?.amountPaid || 0);
+
+    const currentBillConcession = Number(currentBill?.concessionAmount || 0);
+
+    const currentBillBalance = Math.max(
+      currentBillAmount - currentBillPaid - currentBillConcession,
+      0,
+    );
+
+    // -----------------------------------------
+    // TOTAL OUTSTANDING
+    // -----------------------------------------
+    const totalPreviousDue = previousBillsDue + manualPreviousDue;
+
+    const totalOutstanding =
+      totalPreviousDue +
+      currentBillBalance -
+      Number(consumer.advanceAmount || 0);
+
+    // -----------------------------------------
+    // RESPONSE
+    // -----------------------------------------
     return res.json({
       ...consumer.toObject(),
+
       currentBill,
+
+      previousBillsDue,
+      manualPreviousDue,
+      totalPreviousDue,
+
+      currentBillBalance,
+
+      totalOutstanding: Math.max(totalOutstanding, 0),
     });
   } catch (error) {
     console.error("getConsumerDetail error:", error);
-    return res
-      .status(500)
-      .json({ message: "Server error", error: error.message });
+
+    return res.status(500).json({
+      message: "Server error",
+      error: error.message,
+    });
   }
 };
 const applyConcession = async (req, res) => {
@@ -819,47 +1414,103 @@ const recordAdvancePayment = async (req, res) => {
 const editBillAmount = async (req, res) => {
   try {
     const { amount } = req.body;
+
     if (amount === undefined || amount === null || amount === "") {
-      return res.status(400).json({ message: "Amount zaroori hai" });
+      return res.status(400).json({
+        message: "Amount zaroori hai",
+      });
     }
+
+    const newAmount = Number(amount);
+
+    if (!Number.isFinite(newAmount) || newAmount < 0) {
+      return res.status(400).json({
+        message: "Valid amount enter karein",
+      });
+    }
+
     const consumer = await Consumer.findById(req.params.id);
-    if (!consumer)
-      return res.status(404).json({ message: "Consumer nahi mila" });
+
+    if (!consumer) {
+      return res.status(404).json({
+        message: "Consumer nahi mila",
+      });
+    }
 
     const month = getCurrentMonth();
-    let bill = await MonthlyBill.findOne({ consumerId: consumer._id, month });
+
+    let bill = await MonthlyBill.findOne({
+      consumerId: consumer._id,
+      month,
+    });
+
     if (!bill) {
       bill = await MonthlyBill.create({
         consumerId: consumer._id,
         month,
-        amount: Number(amount),
-        status: "unpaid",
+        amount: newAmount,
+        baseAmount: newAmount,
+        amountPaid: 0,
+        concessionAmount: 0,
+        concessionRemark: "",
+        status: newAmount <= 0 ? "paid" : "unpaid",
+        dueRemark: "",
+        paidDate: newAmount <= 0 ? new Date() : null,
+        manualAmountOverride: true,
+        lastEditedBy: req.user._id,
+        lastEditedAt: new Date(),
       });
     } else {
-      bill.amount = Number(amount);
-      if (bill.amount > 0 && bill.amountPaid >= bill.amount) {
+      bill.amount = newAmount;
+
+      // Mark this month's amount as manually overridden.
+      bill.manualAmountOverride = true;
+
+      const paid = Number(bill.amountPaid || 0);
+      const concession = Number(bill.concessionAmount || 0);
+
+      const settled = paid + concession;
+
+      if (newAmount <= 0) {
         bill.status = "paid";
-      } else if (bill.amountPaid > 0) {
+        bill.paidDate = new Date();
+        bill.dueRemark = "";
+        bill.followUpDate = null;
+      } else if (settled >= newAmount) {
+        bill.status = "paid";
+        bill.paidDate = new Date();
+        bill.dueRemark = "";
+        bill.followUpDate = null;
+      } else if (settled > 0) {
         bill.status = "due";
-        bill.dueRemark = `Partial payment — ₹${bill.amount - bill.amountPaid} baaki hai`;
+        bill.paidDate = null;
+        bill.dueRemark = `Partial payment — ₹${newAmount - settled} baaki hai`;
+      } else {
+        bill.status = "unpaid";
+        bill.paidDate = null;
+        bill.dueRemark = `₹${newAmount} baaki hai`;
       }
+
       bill.lastEditedBy = req.user._id;
       bill.lastEditedAt = new Date();
+
       await bill.save();
     }
 
     await logActivity(
       req.user,
       "edit_amount",
-      `${consumer.name} (${consumer.consumerId}) ka amount ₹${amount} kiya`,
+      `${consumer.name} (${consumer.consumerId}) ka amount ₹${newAmount} kiya`,
     );
 
     return res.json(bill);
   } catch (error) {
     console.error("editBillAmount error:", error);
-    return res
-      .status(500)
-      .json({ message: "Server error", error: error.message });
+
+    return res.status(500).json({
+      message: "Server error",
+      error: error.message,
+    });
   }
 };
 
@@ -957,7 +1608,339 @@ const markUnpaid = async (req, res) => {
     });
   }
 };
+const resetPreStartBilling = async (req, res) => {
+  try {
+    const { id } = req.params;
 
+    // App billing start month
+    const startMonth = "2026-09";
+
+    const consumer = await Consumer.findById(id);
+
+    if (!consumer) {
+      return res.status(404).json({
+        message: "Consumer nahi mila",
+      });
+    }
+
+    // ---------------------------------------------------------
+    // CURRENT MONTH BILL
+    // ---------------------------------------------------------
+    const currentBill = await MonthlyBill.findOne({
+      consumerId: consumer._id,
+      month: startMonth,
+    });
+
+    if (!currentBill) {
+      return res.status(400).json({
+        message: `Current bill ${startMonth} mein nahi mila.`,
+      });
+    }
+
+    // ---------------------------------------------------------
+    // SEPTEMBER COLLECTION HISTORY
+    // IMPORTANT:
+    // Jo payment August due mein adjust hua tha,
+    // wo bhi September VisitLog mein collection ke naam se saved hai.
+    // Isliye usko current September bill mein re-allocate karenge.
+    // ---------------------------------------------------------
+    const startDate = new Date(`${startMonth}-01T00:00:00.000Z`);
+
+    const nextMonthDate = new Date(startDate);
+    nextMonthDate.setUTCMonth(nextMonthDate.getUTCMonth() + 1);
+
+    const collectionLogs = await VisitLog.find({
+      consumerId: consumer._id,
+      purpose: "collection",
+      reversed: { $ne: true },
+      createdAt: {
+        $gte: startDate,
+        $lt: nextMonthDate,
+      },
+    })
+      .select("amountCollected")
+      .lean();
+
+    const totalSeptemberCollected = collectionLogs.reduce((sum, item) => {
+      return sum + Number(item.amountCollected || 0);
+    }, 0);
+
+    // ---------------------------------------------------------
+    // CURRENT BILL REBUILD
+    // ---------------------------------------------------------
+    const billAmount = Number(currentBill.amount || 0);
+    const concession = Number(currentBill.concessionAmount || 0);
+
+    const payableAmount = Math.max(billAmount - concession, 0);
+
+    const currentPaid = Math.min(totalSeptemberCollected, payableAmount);
+
+    const newAdvanceAmount = Math.max(
+      totalSeptemberCollected - payableAmount,
+      0,
+    );
+
+    currentBill.amountPaid = currentPaid;
+
+    const settledAmount = currentPaid + concession;
+
+    const currentBalance = Math.max(billAmount - settledAmount, 0);
+
+    if (billAmount <= 0) {
+      currentBill.status = "unpaid";
+      currentBill.paidDate = null;
+      currentBill.dueRemark = "";
+      currentBill.followUpDate = null;
+    } else if (currentBalance <= 0) {
+      currentBill.status = "paid";
+      currentBill.paidDate = new Date();
+      currentBill.dueRemark = "";
+      currentBill.followUpDate = null;
+    } else {
+      currentBill.status = "due";
+      currentBill.paidDate = null;
+      currentBill.dueRemark = `₹${currentBalance} baaki hai`;
+    }
+
+    currentBill.lastEditedBy = req.user._id;
+    currentBill.lastEditedAt = new Date();
+
+    await currentBill.save();
+
+    // ---------------------------------------------------------
+    // ADVANCE REBUILD
+    // Since app starts from September, September collection
+    // excess becomes current consumer advance.
+    // ---------------------------------------------------------
+    consumer.advanceAmount = newAdvanceAmount;
+
+    await consumer.save();
+
+    // ---------------------------------------------------------
+    // DELETE PRE-START MONTHLY BILLS
+    // August and older
+    // ---------------------------------------------------------
+    const oldBills = await MonthlyBill.find({
+      consumerId: consumer._id,
+      month: { $lt: startMonth },
+    })
+      .select("_id month amount amountPaid")
+      .lean();
+
+    const deleteResult = await MonthlyBill.deleteMany({
+      consumerId: consumer._id,
+      month: { $lt: startMonth },
+    });
+    // ---------------------------------------------------------
+    // CLEAN PRE-START COLLECTION LOGS
+    // App September 2026 se start hua.
+    // Old-bill allocation ki separate activity ko hata kar
+    // September ki actual collection ko ek single entry mein rakhen.
+    // ---------------------------------------------------------
+
+    const septemberCollectionStart = new Date("2026-09-01T00:00:00.000Z");
+
+    const septemberCollectionEnd = new Date("2026-10-01T00:00:00.000Z");
+
+    // September ke collection logs
+    const septemberCollectionLogs = await VisitLog.find({
+      consumerId: consumer._id,
+      purpose: "collection",
+      createdAt: {
+        $gte: septemberCollectionStart,
+        $lt: septemberCollectionEnd,
+      },
+      reversed: { $ne: true },
+    }).select("_id amountCollected");
+
+    // Total actual September collection
+    const totalSeptemberCollectionForHistory = septemberCollectionLogs.reduce(
+      (sum, log) => sum + Number(log.amountCollected || 0),
+      0,
+    );
+
+    // Purane split collection entries hatao
+    if (septemberCollectionLogs.length > 0) {
+      await VisitLog.deleteMany({
+        _id: {
+          $in: septemberCollectionLogs.map((log) => log._id),
+        },
+      });
+    }
+
+    // Ek single clean September collection history
+    if (totalSeptemberCollectionForHistory > 0) {
+      await VisitLog.create({
+        consumerId: consumer._id,
+        visitedBy: req.user._id,
+        purpose: "collection",
+        outcome: currentBill.status === "paid" ? "paid" : "promised_later",
+        amountCollected: totalSeptemberCollectionForHistory,
+        customerRemark: "September collection",
+        followUpDate: null,
+        reversed: false,
+      });
+    }
+    // ---------------------------------------------------------
+    // ACTIVITY LOG
+    // ---------------------------------------------------------
+    await logActivity(
+      req.user,
+      "reset_prestart_billing",
+      `${consumer.name} (${consumer.consumerId}) ka pre-start billing history ${startMonth} se pehle clear kiya gaya. September collection ₹${totalSeptemberCollected} ko current bill mein re-allocate kiya gaya.`,
+    );
+
+    return res.json({
+      message: "Pre-start billing successfully reset",
+
+      consumerId: consumer.consumerId,
+
+      startMonth,
+
+      deletedOldBills: deleteResult.deletedCount || 0,
+
+      oldBillDetails: oldBills,
+
+      septemberCollected: totalSeptemberCollected,
+
+      currentBillAmount: billAmount,
+
+      currentBillPaid: currentPaid,
+
+      currentBalance,
+
+      advanceAmount: newAdvanceAmount,
+
+      currentBillStatus: currentBill.status,
+    });
+  } catch (error) {
+    console.error("resetPreStartBilling error:", error);
+
+    return res.status(500).json({
+      message: "Pre-start billing reset nahi hua",
+      error: error.message,
+    });
+  }
+};
+const mergeSeptemberCollectionHistory = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const consumer = await Consumer.findById(id);
+
+    if (!consumer) {
+      return res.status(404).json({
+        message: "Consumer nahi mila",
+      });
+    }
+
+    const startDate = new Date("2026-09-01T00:00:00.000Z");
+    const endDate = new Date("2026-10-01T00:00:00.000Z");
+
+    const logs = await VisitLog.find({
+      consumerId: consumer._id,
+      purpose: "collection",
+      reversed: { $ne: true },
+      createdAt: {
+        $gte: startDate,
+        $lt: endDate,
+      },
+    })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    if (!logs.length) {
+      return res.status(404).json({
+        message: "September collection history nahi mili",
+      });
+    }
+
+    // Same second ke collection logs ko group karo.
+    // ₹150 + ₹100 jaisi split entry isi group mein milegi.
+    const groups = new Map();
+
+    for (const log of logs) {
+      const key = new Date(log.createdAt).toISOString().slice(0, 19);
+
+      if (!groups.has(key)) {
+        groups.set(key, []);
+      }
+
+      groups.get(key).push(log);
+    }
+
+    // Latest split collection group dhoondo
+    let targetGroup = null;
+
+    for (const group of groups.values()) {
+      if (group.length < 2) {
+        continue;
+      }
+
+      const hasPreviousDueLog = group.some((item) =>
+        String(item.customerRemark || "")
+          .toLowerCase()
+          .includes("previous due"),
+      );
+
+      if (hasPreviousDueLog) {
+        targetGroup = group;
+        break;
+      }
+    }
+
+    if (!targetGroup) {
+      return res.status(404).json({
+        message:
+          "Split September collection history nahi mili. Kuch bhi change nahi hua.",
+      });
+    }
+
+    const totalAmount = targetGroup.reduce(
+      (sum, item) => sum + Number(item.amountCollected || 0),
+      0,
+    );
+
+    // Old split logs delete
+    await VisitLog.deleteMany({
+      _id: {
+        $in: targetGroup.map((item) => item._id),
+      },
+    });
+
+    // Ek single clean collection entry
+    await VisitLog.create({
+      consumerId: consumer._id,
+      visitedBy: req.user._id,
+      purpose: "collection",
+      outcome: "paid",
+      amountCollected: totalAmount,
+      customerRemark: "September collection",
+      followUpDate: null,
+      reversed: false,
+    });
+
+    await logActivity(
+      req.user,
+      "merge_collection_history",
+      `${consumer.name} (${consumer.consumerId}) ki September split collection history ₹${totalAmount} ko single collection entry mein merge kiya`,
+    );
+
+    return res.json({
+      message: "September collection history merge ho gayi",
+      consumerId: consumer.consumerId,
+      mergedEntries: targetGroup.length,
+      totalAmount,
+    });
+  } catch (error) {
+    console.error("mergeSeptemberCollectionHistory error:", error);
+
+    return res.status(500).json({
+      message: "Collection history merge nahi hui",
+      error: error.message,
+    });
+  }
+};
 const markDue = async (req, res) => {
   try {
     const { remark, followUpDate } = req.body;
@@ -1148,6 +2131,8 @@ module.exports = {
   assignAreaByAddress,
   searchConsumers,
   getConsumerDetail,
+  getConsumerPaytvLive,
+  getLivePaytv,
   collectPayment,
   recordAdvancePayment,
   editBillAmount,
@@ -1157,6 +2142,8 @@ module.exports = {
   getHistory,
   applyConcession,
   markDue,
+  resetPreStartBilling,
   applyConcession,
   setPreviousDue,
+  mergeSeptemberCollectionHistory,
 };

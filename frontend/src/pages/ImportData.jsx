@@ -210,7 +210,117 @@ const ImportData = () => {
             {error}
           </div>
         )}
+        <div className="bg-blue-50 border border-blue-200 rounded-2xl p-5 space-y-2">
+          <p className="font-semibold text-blue-800 mb-1">
+            PayTV SMS se Auto-Sync
+          </p>
+          <p className="text-xs text-blue-600 mb-2">
+            Manually Excel download-upload karne ki jagah, seedha company ki
+            site se le aayein
+          </p>
 
+          <button
+            onClick={async () => {
+              setBusy("paytvExpiry");
+              setError("");
+              try {
+                const { data } = await api.post("/external-sync/expiry");
+                setExpiryResult(data);
+              } catch (err) {
+                setError(
+                  err.response?.data?.message ||
+                    "PayTV SMS se Expiry sync nahi hua",
+                );
+              } finally {
+                setBusy("");
+              }
+            }}
+            disabled={busy === "paytvExpiry"}
+            className="w-full bg-blue-700 hover:bg-blue-800 disabled:bg-blue-300 text-white text-sm font-semibold py-2 rounded-lg"
+          >
+            {busy === "paytvExpiry"
+              ? "Sync ho raha hai..."
+              : "PayTV SMS se Expiry Sync Karein"}
+          </button>
+
+          <button
+            onClick={async () => {
+              setBusy("paytvBills");
+              setError("");
+              try {
+                const { data } = await api.post("/external-sync/bills");
+                setBillResult(data);
+              } catch (err) {
+                setError(
+                  err.response?.data?.message ||
+                    "PayTV SMS se Bills sync nahi hua",
+                );
+              } finally {
+                setBusy("");
+              }
+            }}
+            disabled={busy === "paytvBills"}
+            className="w-full bg-blue-700 hover:bg-blue-800 disabled:bg-blue-300 text-white text-sm font-semibold py-2 rounded-lg"
+          >
+            {busy === "paytvBills"
+              ? "Sync ho raha hai..."
+              : "PayTV SMS se Bills Sync Karein (is mahine ka)"}
+          </button>
+
+          <button
+            onClick={async () => {
+              setBusy("paytvAll");
+              setError("");
+              try {
+                const { data } = await api.post(
+                  "/external-sync/all-subscribers",
+                );
+                setMasterResult(data);
+              } catch (err) {
+                setError(
+                  err.response?.data?.message || "Poori list sync nahi hui",
+                );
+              } finally {
+                setBusy("");
+              }
+            }}
+            disabled={busy === "paytvAll"}
+            className="w-full bg-indigo-700 hover:bg-indigo-800 disabled:bg-indigo-300 text-white text-sm font-semibold py-2 rounded-lg"
+          >
+            {busy === "paytvAll"
+              ? "Sync ho raha hai (13 pages)..."
+              : "PayTV SMS se POORI Subscriber List Sync Karein (Naam/Area/Status)"}
+          </button>
+
+          <button
+            onClick={async () => {
+              if (!areaId) {
+                setError("Pehle area select karein.");
+                return;
+              }
+
+              setBusy("paytvAllHw");
+              setError("");
+
+              try {
+                const { data } = await api.post(
+                  `/external-sync/all-subscribers?withHardware=true&areaId=${areaId}`,
+                );
+                setMasterResult(data);
+              } catch (err) {
+                setError(err.response?.data?.message || "Sync nahi hua");
+              } finally {
+                setBusy("");
+              }
+            }}
+            disabled={busy === "paytvAllHw"}
+            className="w-full bg-purple-700 hover:bg-purple-800 disabled:bg-purple-300 text-white text-sm font-semibold py-2 rounded-lg"
+          >
+            {busy === "paytvAllHw"
+              ? "Live Hardware Report sync ho raha hai..."
+              : "+ STB/VC Bhi Live Report Se Sync Karein"}
+          </button>
+        </div>
         <div className="grid gap-5 lg:grid-cols-2">
           <ImportCard
             number="1"

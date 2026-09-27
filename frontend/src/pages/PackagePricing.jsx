@@ -266,11 +266,17 @@ const PackagePricing = () => {
 
       const { data } = await api.post(`/package-prices/${pkg._id}/apply`);
 
+      const missingText =
+        Array.isArray(data.missingPricing) && data.missingPricing.length
+          ? `\n\nMissing Pricing:\n• ${data.missingPricing.join("\n• ")}`
+          : "";
+
       alert(
         `Pricing applied successfully.\n\n` +
           `Consumers Updated: ${data.updatedConsumers}\n` +
           `Bills Updated: ${data.updatedBills}\n` +
-          `Skipped: ${data.skippedConsumers}`,
+          `Skipped: ${data.skippedConsumers}` +
+          missingText,
       );
 
       await loadData();

@@ -14,6 +14,8 @@ const activityLogRoutes = require("./routes/activityLogRoutes");
 const stockRoutes = require("./routes/stockRoutes");
 const packagePriceRoutes = require("./routes/packagePriceRoutes");
 const followUpRoutes = require("./routes/followUpRoutes");
+const externalSyncRoutes = require("./routes/externalSyncRoutes");
+const expiryReportRoutes = require("./routes/expiryReportRoutes");
 
 connectDB();
 
@@ -33,11 +35,12 @@ app.use("/api/import", importRoutes);
 app.use("/api/consumers", consumerRoutes);
 app.use("/api/complaints", complaintRoutes);
 app.use("/api/reports", reportRoutes);
+app.use("/api/reports/expiry", expiryReportRoutes);
 app.use("/api/franchisees", franchiseeRoutes);
 app.use("/api/activity-log", activityLogRoutes);
 app.use("/api/stock", stockRoutes);
 app.use("/api/package-prices", packagePriceRoutes);
-
+app.use("/api/external-sync", externalSyncRoutes);
 app.use((err, req, res, next) => {
   console.error(err.stack);
   res.status(500).json({ message: "Something went wrong on the server" });

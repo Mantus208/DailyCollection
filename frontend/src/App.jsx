@@ -20,6 +20,7 @@ import ProtectedRoute from "./components/ProtectedRoute";
 import AppLayout from "./components/AppLayout";
 import PackagePricing from "./pages/PackagePricing";
 import CollectionEntry from "./pages/CollectionEntry";
+import ExpiryReport from "./pages/ExpiryReport";
 
 function App() {
   return (
@@ -47,6 +48,7 @@ function App() {
         <Route path="/activity-log" element={<ActivityLog />} />
         <Route path="/area/:areaId" element={<Dashboard />} />
         <Route path="/area/:areaId/search" element={<ConsumerSearch />} />
+        <Route path="/reports/expiry" element={<ExpiryReport />} />
         <Route path="/area/:areaId/collection" element={<CollectionEntry />} />
         <Route path="/area/:areaId/reports" element={<Reports />} />
         <Route path="/area/:areaId/complaints" element={<Complaints />} />

@@ -27,7 +27,10 @@ const monthlyBillSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
-
+    manualAmountOverride: {
+      type: Boolean,
+      default: false,
+    },
     concessionRemark: {
       type: String,
       trim: true,

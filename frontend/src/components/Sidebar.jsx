@@ -17,6 +17,7 @@ import {
   LogOut,
   X,
   MapPinned,
+  CalendarClock,
 } from "lucide-react";
 
 const Sidebar = () => {
@@ -91,6 +92,12 @@ const Sidebar = () => {
               },
             ]
           : []),
+
+        {
+          label: "Expiry Report",
+          icon: CalendarClock,
+          to: "/reports/expiry",
+        },
 
         {
           label: "Stock Report",

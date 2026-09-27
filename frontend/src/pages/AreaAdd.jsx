@@ -12,6 +12,13 @@ const AreaAdd = () => {
   const [loading, setLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const [franchisees, setFranchisees] = useState([]);
+  const [selectedFranchiseId, setSelectedFranchiseId] = useState("");
+
+  const [franchiseLoading, setFranchiseLoading] = useState(false);
+
+  const [mappingSavingId, setMappingSavingId] = useState("");
+
   const load = async () => {
     try {
       setLoading(true);
@@ -24,11 +31,27 @@ const AreaAdd = () => {
       setLoading(false);
     }
   };
+  const loadPaytvFranchisees = async () => {
+    try {
+      setFranchiseLoading(true);
 
+      const { data } = await api.get("/areas/paytv-franchisees");
+
+      setFranchisees(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error("PayTV franchise load error:", err);
+
+      setError(
+        err.response?.data?.message || "PayTV Franchise list load nahi hui",
+      );
+    } finally {
+      setFranchiseLoading(false);
+    }
+  };
   useEffect(() => {
     load();
+    loadPaytvFranchisees();
   }, []);
-
   const handleSubmit = async (e) => {
     e.preventDefault();
 
@@ -39,18 +62,24 @@ const AreaAdd = () => {
       setError("Area name required hai");
       return;
     }
-
+    if (!selectedFranchiseId) {
+      setError("PayTV Franchisee select karna zaroori hai");
+      return;
+    }
     setIsSubmitting(true);
 
     try {
       await api.post("/areas", {
         name: name.trim(),
         description: description.trim(),
+
+        paytvCompanyId: 1,
+        paytvFranchiseeId: Number(selectedFranchiseId),
       });
 
       setName("");
       setDescription("");
-
+      setSelectedFranchiseId("");
       setSuccess("Area successfully create ho gaya.");
 
       await load();
@@ -64,7 +93,43 @@ const AreaAdd = () => {
       setIsSubmitting(false);
     }
   };
+  const savePaytvMapping = async (areaId, franchiseId) => {
+    if (!franchiseId) {
+      setError("PayTV Franchise select karein.");
+      return;
+    }
 
+    try {
+      setError("");
+      setMappingSavingId(areaId);
+
+      await api.put(`/areas/${areaId}/paytv-mapping`, {
+        paytvCompanyId: 1,
+        paytvFranchiseeId: Number(franchiseId),
+      });
+
+      await load();
+
+      setSuccess("PayTV Franchise mapping save ho gayi.");
+
+      setTimeout(() => {
+        setSuccess("");
+      }, 2500);
+    } catch (err) {
+      console.error("PAYTV MAPPING SAVE ERROR:", err);
+
+      console.error("PAYTV MAPPING RESPONSE:", err.response?.data);
+
+      setError(
+        err.response?.data?.message ||
+          err.response?.data?.error ||
+          err.message ||
+          "PayTV mapping save nahi hui",
+      );
+    } finally {
+      setMappingSavingId("");
+    }
+  };
   const filteredAreas = areas.filter((area) =>
     area.name?.toLowerCase().includes(query.trim().toLowerCase()),
   );
@@ -213,7 +278,47 @@ const AreaAdd = () => {
                   "
                 />
               </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1.5">
+                  PayTV Franchisee
+                </label>
 
+                <select
+                  value={selectedFranchiseId}
+                  onChange={(e) => setSelectedFranchiseId(e.target.value)}
+                  disabled={franchiseLoading}
+                  className="
+      w-full
+      bg-slate-50
+      border border-slate-200
+      rounded-xl
+      px-3.5 py-3
+      text-sm
+      text-slate-800
+      outline-none
+      transition
+      focus:bg-white
+      focus:border-blue-500
+      focus:ring-4
+      focus:ring-blue-500/10
+      disabled:opacity-60
+    "
+                >
+                  <option value="">
+                    {franchiseLoading
+                      ? "Loading PayTV Franchisees..."
+                      : "Select PayTV Franchisee"}
+                  </option>
+
+                  {franchisees.map((franchise) => (
+                    <option key={franchise.id} value={franchise.id}>
+                      {franchise.name}
+                      {" — "}
+                      {franchise.id}
+                    </option>
+                  ))}
+                </select>
+              </div>
               {/* BUTTON */}
               <button
                 type="submit"
@@ -292,10 +397,25 @@ const AreaAdd = () => {
             </div>
 
             {/* TABLE HEADER */}
-            <div className="hidden sm:grid grid-cols-[55px_minmax(150px,1fr)_minmax(150px,1fr)] px-5 py-2.5 bg-slate-50 border-b border-slate-100 text-[11px] font-bold uppercase tracking-wider text-slate-400">
+            <div
+              className="
+                  hidden sm:grid
+                  grid-cols-[55px_minmax(170px,1.1fr)_minmax(170px,1fr)_minmax(280px,1.5fr)]
+                  items-center
+                  px-5 py-2.5
+                  bg-slate-50
+                  border-b border-slate-100
+                  text-[11px]
+                  font-bold
+                  uppercase
+                  tracking-wider
+                  text-slate-400
+                "
+            >
               <div>#</div>
               <div>Area Name</div>
               <div>Description</div>
+              <div>PayTV Franchise</div>
             </div>
 
             {/* SCROLLABLE LIST */}
@@ -332,18 +452,19 @@ const AreaAdd = () => {
                   <div
                     key={area._id}
                     className="
-                      grid
-                      grid-cols-[45px_minmax(0,1fr)]
-                      sm:grid-cols-[55px_minmax(150px,1fr)_minmax(150px,1fr)]
-                      items-center
-                      px-5
-                      py-3
-                      border-b
-                      border-slate-100
-                      last:border-b-0
-                      hover:bg-slate-50
-                      transition
-                    "
+                          grid
+                          grid-cols-[45px_minmax(0,1fr)]
+                          sm:grid-cols-[55px_minmax(170px,1.1fr)_minmax(170px,1fr)_minmax(280px,1.5fr)]
+                          items-center
+                          gap-0
+                          px-5
+                          py-3
+                          border-b
+                          border-slate-100
+                          last:border-b-0
+                          hover:bg-slate-50
+                          transition
+                        "
                   >
                     {/* NUMBER */}
                     <div>
@@ -377,6 +498,49 @@ const AreaAdd = () => {
                       <p className="text-xs text-slate-500 truncate">
                         {area.description || "No description"}
                       </p>
+                    </div>
+                    <div className="hidden sm:block min-w-0">
+                      <div className="flex items-center gap-2">
+                        <select
+                          value={area.paytvFranchiseeId || ""}
+                          onChange={(e) => {
+                            setAreas((prev) =>
+                              prev.map((item) =>
+                                item._id === area._id
+                                  ? {
+                                      ...item,
+                                      paytvFranchiseeId:
+                                        Number(e.target.value) || null,
+                                    }
+                                  : item,
+                              ),
+                            );
+                          }}
+                          className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs"
+                        >
+                          <option value="">Select Franchise</option>
+
+                          {franchisees.map((franchise) => (
+                            <option key={franchise.id} value={franchise.id}>
+                              {franchise.name}
+                            </option>
+                          ))}
+                        </select>
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            savePaytvMapping(area._id, area.paytvFranchiseeId)
+                          }
+                          disabled={
+                            mappingSavingId === area._id ||
+                            !area.paytvFranchiseeId
+                          }
+                          className="rounded-lg bg-blue-600 px-3 py-2 text-[10px] font-bold text-white disabled:opacity-40"
+                        >
+                          {mappingSavingId === area._id ? "Saving..." : "Save"}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ))

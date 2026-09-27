@@ -368,8 +368,8 @@ const billingSummary = async (req, res) => {
 
       const isNoPrice = !hasPrice;
 
-      if (consumer.consumerId === "NCVS0156") {
-        console.log("SUMITRA BILL DEBUG:", {
+      if (consumer.consumerId === "NCVS0263") {
+        console.log("D PARNAS BILL DEBUG:", {
           consumerId: consumer.consumerId,
           consumerMongoId: String(consumer._id),
           targetMonth,
