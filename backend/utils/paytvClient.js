@@ -46,7 +46,6 @@ const createClient = () => {
 
 const loginToPaytv = async () => {
   if (paytvClient) {
-    console.log("PayTV: reusing existing login session.");
     return paytvClient;
   }
 
@@ -55,116 +54,67 @@ const loginToPaytv = async () => {
   }
 
   loginPromise = (async () => {
+    const username = String(process.env.PAYTV_USERNAME || "").trim();
+    const password = String(process.env.PAYTV_PASSWORD || "").trim();
+    const loginType = String(process.env.PAYTV_LOGIN_TYPE || "User").trim();
+
+    // Case 1: environment variables hi set nahi hain
+    if (!username || !password) {
+      throw new Error(
+        "PAYTV_USERNAME / PAYTV_PASSWORD server ke environment variables me set nahi hain. " +
+          "(Render: Dashboard → Environment me add karein.)",
+      );
+    }
+
     const client = createClient();
 
     try {
-      console.log("PayTV: creating new login session...");
+      console.log(
+        `PayTV: creating new login session... base=${BASE_URL} user=${username} type=${loginType}`,
+      );
 
-      // Login page open karke initial session/cookie establish
-      await client.get("/UserLogin", {
-        timeout: 60000,
-      });
+      // Case 2: server PayTV tak pahunch hi nahi pa raha
+      try {
+        await client.get("/UserLogin");
+      } catch (netErr) {
+        throw new Error(
+          `Server PayTV (${BASE_URL}) tak pahunch nahi pa raha (${netErr.code || netErr.message}). ` +
+            "Hosting ka IP PayTV ne block kiya ho sakta hai.",
+        );
+      }
 
       const params = new URLSearchParams();
+      params.append("username", username);
+      params.append("password", password);
+      params.append("type", loginType);
 
-      params.append("username", process.env.PAYTV_USERNAME || "");
-
-      params.append("password", process.env.PAYTV_PASSWORD || "");
-
-      params.append("type", process.env.PAYTV_LOGIN_TYPE || "User");
-
-      // IMPORTANT:
-      // PayTV login ke 302 redirect ko Axios se
-      // automatically follow nahi karna hai.
       const loginRes = await client.post("/UserLogin", params, {
-        timeout: 60000,
-
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-
-        maxRedirects: 0,
-
-        validateStatus: (status) => status >= 200 && status < 400,
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        maxRedirects: 5,
+        validateStatus: (status) => status < 500,
       });
-
-      const location = String(loginRes.headers?.location || "");
 
       const html = typeof loginRes.data === "string" ? loginRes.data : "";
 
-      console.log("📺 PAYTV LOGIN RESPONSE:", {
-        status: loginRes.status,
-        location,
-      });
+      // Login successful page me hamesha "/UserLogout" link hota hai
+      const loggedIn = html.includes("/UserLogout");
+      const stillLoginForm =
+        html.includes('name="username"') && html.includes('name="password"');
 
-      // ---------------------------------------------------
-      // NORMAL SUCCESS CASE
-      // PayTV successful login:
-      // 302 -> /SelectLoginFranchise
-      // Cookie jar mein session already save ho chuka hai.
-      // Redirect follow karne ki zaroorat nahi hai.
-      // ---------------------------------------------------
-
-      const expectedLoginRedirect =
-        loginRes.status >= 300 &&
-        loginRes.status < 400 &&
-        /\/SelectLoginFranchise/i.test(location);
-
-      if (expectedLoginRedirect) {
-        paytvClient = client;
-
-        console.log("✅ PayTV login successful.");
-
-        console.log("📺 PayTV login redirect:", location);
-
-        return paytvClient;
-      }
-
-      // ---------------------------------------------------
-      // 2xx response mein login page wapas aaya?
-      // Means login failed.
-      // ---------------------------------------------------
-
-      const stillLoginPage =
-        html.includes('name="username"') ||
-        html.includes('id="username"') ||
-        html.includes("UserLogin");
-
-      if (stillLoginPage && loginRes.status < 300) {
+      // Case 3: PayTV ne credentials reject kar diye
+      if (!loggedIn && stillLoginForm) {
         throw new Error(
-          "PayTV login fail ho gaya. .env me PAYTV_USERNAME / PAYTV_PASSWORD check karein.",
+          "PayTV ne username/password reject kiya. Environment me PAYTV_USERNAME / " +
+            "PAYTV_PASSWORD / PAYTV_LOGIN_TYPE check karein (quotes ya extra space na ho).",
         );
       }
-
-      // ---------------------------------------------------
-      // Unexpected redirect
-      // ---------------------------------------------------
-
-      if (loginRes.status >= 300 && loginRes.status < 400) {
-        throw new Error(
-          `Unexpected PayTV login redirect: ${location || "unknown"}`,
-        );
-      }
-
-      // ---------------------------------------------------
-      // Normal 2xx success
-      // ---------------------------------------------------
 
       paytvClient = client;
-
-      console.log("✅ PayTV login session created successfully.");
-
+      console.log("PayTV: login session created successfully.");
       return paytvClient;
     } catch (error) {
       paytvClient = null;
-
-      console.error(
-        "PayTV login error:",
-        error.response?.status,
-        error.code || "",
-        error.message,
-      );
-
+      console.error("PayTV login error:", error.response?.status, error.message);
       throw error;
     } finally {
       loginPromise = null;
