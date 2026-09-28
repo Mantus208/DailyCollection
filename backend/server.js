@@ -16,6 +16,7 @@ const packagePriceRoutes = require("./routes/packagePriceRoutes");
 const followUpRoutes = require("./routes/followUpRoutes");
 const externalSyncRoutes = require("./routes/externalSyncRoutes");
 const expiryReportRoutes = require("./routes/expiryReportRoutes");
+const adminCleanupRoutes = require("./routes/adminCleanupRoutes");
 
 connectDB();
 
@@ -23,6 +24,7 @@ const app = express();
 
 app.use(cors());
 app.use(express.json());
+app.use("/api/admin/cleanup", adminCleanupRoutes);
 
 app.get("/", (req, res) => {
   res.send("Daily Collection App API is running");

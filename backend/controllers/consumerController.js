@@ -5,11 +5,20 @@ const Area = require("../models/Area");
 const { getCurrentMonth } = require("../utils/dateHelpers");
 const { logActivity } = require("../utils/logActivity");
 
+const PackagePrice = require("../models/PackagePrice");
+const {
+  makePackageKey,
+  getEffectivePrice,
+  normalizePackageType,
+  calculateConsumerMonthlyAmount,
+} = require("./packagePriceController");
+
 const {
   getLiveSubscriber,
   getLiveSubscriberByEncodedId,
   getLiveSubscriberAddress,
   getLiveHardware,
+  getLiveExpiryFromReport,
   getLiveBill,
   switchPaytvFranchise,
 } = require("../utils/paytvClient");
@@ -277,7 +286,82 @@ const getConsumerPaytvLive = async (req, res) => {
     } catch (error) {
       console.error("📺 Live hardware error:", error.message);
     }
+    // =========================================================
+    // LIVE EXPIRY REPORT
+    // =========================================================
 
+    let liveExpiry = {
+      found: false,
+      packageName: "",
+      packageType: "",
+      startDate: null,
+      expiryDate: null,
+    };
+
+    try {
+      liveExpiry = await getLiveExpiryFromReport({
+        companyId,
+        franchiseId: resolvedFranchiseId,
+        consumerId: live.consumerId || consumer.consumerId,
+      });
+
+      console.log("✅ LIVE EXPIRY FETCHED:", {
+        consumerId: live.consumerId || consumer.consumerId,
+        packageName: liveExpiry?.packageName,
+        startDate: liveExpiry?.startDate,
+        expiryDate: liveExpiry?.expiryDate,
+      });
+    } catch (error) {
+      console.error("📺 Live expiry error:", error.message);
+    }
+    // =========================================================
+    // 5b. LOCAL PACKAGE PRICING — har live package/addon ka
+    //     configured price (area-override ya default) nikal ke
+    //     total consumer monthly amount banata hai
+    //     (yahi calculation Package Pricing ke "Apply" me hoti hai)
+    // =========================================================
+    let pricingBreakdown = [];
+    let pricingTotal = null;
+    let pricingMissing = [];
+
+    try {
+      const pricingConfigs = await PackagePrice.find({ active: true }).lean();
+      const pricingMap = new Map();
+      for (const cfg of pricingConfigs) {
+        pricingMap.set(makePackageKey(cfg.packageName, cfg.packageType), cfg);
+      }
+
+      const fakeConsumer = {
+        areaId: consumer.areaId,
+        paytv: { packages: hardware?.packages || [] },
+      };
+
+      const calc = calculateConsumerMonthlyAmount(fakeConsumer, pricingMap);
+      pricingMissing = calc.missing || [];
+      if (calc.success) {
+        pricingTotal = calc.amount;
+      }
+
+      pricingBreakdown = (hardware?.packages || []).map((item) => {
+        const rawType = String(item?.type || "")
+          .trim()
+          .toLowerCase();
+        const packageType =
+          rawType === "addon" || rawType === "basic"
+            ? "Package"
+            : normalizePackageType(item?.type);
+        const key = makePackageKey(item?.name, packageType);
+        const cfg = pricingMap.get(key);
+        const price = cfg ? getEffectivePrice(cfg, consumer.areaId) : null;
+        return {
+          name: item?.name || "",
+          type: item?.type || "",
+          configuredPrice: price,
+        };
+      });
+    } catch (error) {
+      console.error("📺 Package pricing calculation failed:", error.message);
+    }
     // =========================================================
     // SAVE LIVE PAYTV HARDWARE + PACKAGE CACHE
     // =========================================================
@@ -443,15 +527,22 @@ const getConsumerPaytvLive = async (req, res) => {
         lastPackageDate: hardware?.basicPackage?.startDate || null,
         name: hardware?.basicPackage?.name || "",
         type: hardware?.basicPackage?.type || "",
-        startDate: hardware?.basicPackage?.startDate || null,
-        expiryDate: hardware?.basicPackage?.endDate || null,
+
+        startDate:
+          liveExpiry?.startDate || hardware?.basicPackage?.startDate || null,
+
+        expiryDate:
+          liveExpiry?.expiryDate || hardware?.basicPackage?.expiryDate || null,
+
         price: hardware?.basicPackage?.price ?? null,
         channelCount: hardware?.basicPackage?.channelCount ?? 0,
         plan: hardware?.basicPackage?.plan || "",
         packages: hardware?.packages || [],
         addons: hardware?.addons || [],
+        pricingBreakdown,
+        totalAmount: pricingTotal,
+        missingPricing: pricingMissing,
       },
-
       bill: null,
     });
   } catch (error) {
@@ -881,21 +972,21 @@ const applyConcession = async (req, res) => {
 
     bill.concessionRemark = remark.trim();
 
-    // Current month ka payable amount reduce
-    bill.amount = currentAmount - concession;
+    // bill.amount ko CHHEDNA NAHI HAI. Wo fixed package price rahega (e.g., 310)
 
-    // Agar concession ke baad paid amount complete ho gaya
-    if (bill.amountPaid >= bill.amount) {
-      bill.amountPaid = bill.amount;
+    // settled amount nikalenge (Pehle se diya hua paisa + Naya concession)
+    const settledAmount =
+      Number(bill.amountPaid || 0) + Number(bill.concessionAmount || 0);
+
+    // Agar concession lagane ke baad total settled amount, bill amount ke barabar ya jyada ho jaye
+    if (settledAmount >= currentAmount) {
       bill.status = "paid";
       bill.paidDate = new Date();
       bill.dueRemark = "";
       bill.followUpDate = null;
     } else {
       bill.status = "due";
-
-      const newBalance = bill.amount - bill.amountPaid;
-
+      const newBalance = currentAmount - settledAmount;
       bill.dueRemark = `Concession ₹${concession} ke baad ₹${newBalance} baaki hai`;
     }
 
@@ -909,6 +1000,20 @@ const applyConcession = async (req, res) => {
       "concession",
       `${consumer.name} (${consumer.consumerId}) ko ₹${concession} concession diya — ${month}`,
     );
+
+    // 🟢 RECENT ACTIVITY ME DIKHANE KE LIYE YEH NAYA BLOCK ADD KAREIN
+    await VisitLog.create({
+      consumerId: consumer._id,
+      visitedBy: req.user._id,
+      purpose: "concession", // purpose concession rakha hai taaki cash me mix na ho
+      outcome: bill.status === "paid" ? "paid" : "not_paid",
+      amountCollected: concession,
+      customerRemark:
+        `₹${concession} ka discount (concession) diya gaya.` +
+        (remark.trim() ? ` Reason: ${remark.trim()}` : ""),
+      followUpDate: null,
+      reversed: false,
+    });
 
     return res.json(bill);
   } catch (error) {
@@ -1570,6 +1675,8 @@ const markUnpaid = async (req, res) => {
       bill.status = "unpaid";
       bill.paidDate = null;
       bill.amountPaid = 0;
+      bill.concessionAmount = 0;
+      bill.concessionRemark = "";
       bill.dueRemark = "";
       bill.followUpDate = null;
       bill.lastEditedBy = req.user._id;

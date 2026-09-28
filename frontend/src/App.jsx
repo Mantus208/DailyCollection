@@ -21,6 +21,7 @@ import AppLayout from "./components/AppLayout";
 import PackagePricing from "./pages/PackagePricing";
 import CollectionEntry from "./pages/CollectionEntry";
 import ExpiryReport from "./pages/ExpiryReport";
+import AccountCleanup from "./pages/AccountCleanup";
 
 function App() {
   return (
@@ -52,6 +53,7 @@ function App() {
         <Route path="/area/:areaId/collection" element={<CollectionEntry />} />
         <Route path="/area/:areaId/reports" element={<Reports />} />
         <Route path="/area/:areaId/complaints" element={<Complaints />} />
+        <Route path="/account-cleanup" element={<AccountCleanup />} />
         <Route
           path="/area/:areaId/consumer/:consumerId"
           element={<ConsumerDetail />}

@@ -18,6 +18,7 @@ import {
   X,
   MapPinned,
   CalendarClock,
+  CalendarCheck,
 } from "lucide-react";
 
 const Sidebar = () => {
@@ -121,6 +122,11 @@ const Sidebar = () => {
                 label: "Franchisee Add",
                 icon: Building2,
                 to: "/franchisee-add",
+              },
+              {
+                label: "Clean Month Data",
+                icon: CalendarCheck,
+                to: "/account-cleanup",
               },
               {
                 label: "Package Pricing",

@@ -63,12 +63,22 @@ const getConsumerPaytvItems = (consumer) => {
   // Prefer complete live package list
   if (Array.isArray(paytv.packages) && paytv.packages.length > 0) {
     rawItems = paytv.packages;
-  } else {
+  } else if (
+    paytv.basicPackage ||
+    (Array.isArray(paytv.addons) && paytv.addons.length > 0)
+  ) {
     // Fallback for older cached consumers
     rawItems = [
       ...(paytv.basicPackage ? [paytv.basicPackage] : []),
-
       ...(Array.isArray(paytv.addons) ? paytv.addons : []),
+    ];
+  } else if (consumer.packageName) {
+    // LEGACY FALLBACK: Jo manually local DB me add hue hain
+    rawItems = [
+      {
+        name: consumer.packageName,
+        type: consumer.packageType || "Package",
+      },
     ];
   }
 
@@ -520,10 +530,21 @@ const calculateConsumerMonthlyAmount = (consumer, pricingMap) => {
 
   if (Array.isArray(paytv.packages) && paytv.packages.length > 0) {
     items = paytv.packages;
-  } else {
+  } else if (
+    paytv.basicPackage ||
+    (Array.isArray(paytv.addons) && paytv.addons.length > 0)
+  ) {
     items = [
       ...(paytv.basicPackage ? [paytv.basicPackage] : []),
       ...(Array.isArray(paytv.addons) ? paytv.addons : []),
+    ];
+  } else if (consumer.packageName) {
+    // LEGACY FALLBACK: Manual consumers ke price calc ke liye
+    items = [
+      {
+        name: consumer.packageName,
+        type: consumer.packageType || "Package",
+      },
     ];
   }
 
@@ -641,15 +662,11 @@ const applyPackagePrice = async (req, res) => {
     }
 
     // =====================================================
-    // ALL CONSUMERS WITH PAYTV DATA
+    // ALL CONSUMERS (LIVE + MANUAL)
     // =====================================================
 
-    const consumers = await Consumer.find({
-      "paytv.customerId": {
-        $ne: null,
-      },
-    })
-      .select("_id areaId monthlyAmount paytv")
+    const consumers = await Consumer.find({})
+      .select("_id areaId monthlyAmount paytv packageName packageType")
       .lean();
 
     if (!consumers.length) {
@@ -740,19 +757,20 @@ const applyPackagePrice = async (req, res) => {
       });
 
       if (!calculation.success) {
-        skippedConsumers++;
+        // skippedConsumers++ hata diya gaya hai taaki count sahi rahe
         incompletePricing++;
 
         for (const item of calculation.missing) {
           missingPricingSet.add(`${item.packageName} [${item.packageType}]`);
         }
 
-        console.log("⚠️ Pricing missing:", {
+        console.log("⚠️ Pricing missing but updating anyway:", {
           consumerId: consumer._id,
           missing: calculation.missing,
         });
 
-        continue;
+        // 🚨 'continue;' yahan se hata diya gaya hai.
+        // Ab system partial update allow karega aur customer skip nahi hoga.
       }
 
       const totalAmount = calculation.amount;
@@ -882,4 +900,9 @@ module.exports = {
   updatePackagePrice,
   deletePackagePrice,
   applyPackagePrice,
+  // Naye exports — consumerController me Live Info breakdown ke liye reuse honge
+  makePackageKey,
+  getEffectivePrice,
+  normalizePackageType,
+  calculateConsumerMonthlyAmount,
 };
