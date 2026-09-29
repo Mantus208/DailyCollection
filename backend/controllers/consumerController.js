@@ -179,32 +179,11 @@ const getConsumerPaytvLive = async (req, res) => {
             "paytv.companyId": companyId,
             "paytv.franchiseeId": franchiseId,
             "paytv.areaId": paytvAreaId,
-
             "paytv.customerId": Number(live.customerId) || null,
-
             "paytv.encodedId": live.encodedId || "",
-
             "paytv.name": live.name || consumer.name || "",
-
             "paytv.mobile": live.mobile || "",
-
             "paytv.status": live.active ? "active" : "inactive",
-
-            "paytv.stbNo": hardware?.stbNo || "",
-
-            "paytv.vcNo": hardware?.vcNo || "",
-
-            "paytv.basicPackage": hardware?.basicPackage || null,
-
-            "paytv.addons": hardware?.addons || [],
-
-            "paytv.packages": hardware?.packages || [],
-
-            "paytv.lastFetchedAt": new Date(),
-
-            "paytv.fetchStatus": "live",
-
-            "paytv.fetchError": "",
           },
         },
       );
