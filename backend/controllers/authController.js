@@ -25,7 +25,7 @@ const registerUser = async (req, res) => {
     if (!name || !username || !password) {
       return res
         .status(400)
-        .json({ message: "Name, username aur password zaroori hai" });
+        .json({ message: "ନାମ, ୟୁଜରନେମ୍ ଏବଂ ପାସୱାର୍ଡ ଜରୁରୀ ଅଟେ ।" });
     }
 
     const existingUser = await User.findOne({
@@ -34,7 +34,7 @@ const registerUser = async (req, res) => {
     if (existingUser) {
       return res
         .status(400)
-        .json({ message: "Ye username pehle se use ho raha hai" });
+        .json({ message: "ଏହି ୟୁଜରନେମ୍ ପୂର୍ବରୁ ବ୍ୟବହାର ହେଉଛି ।" });
     }
 
     const user = await User.create({
@@ -71,7 +71,7 @@ const signupUser = async (req, res) => {
     if (!name || !username || !password) {
       return res
         .status(400)
-        .json({ message: "Name, username aur password zaroori hai" });
+        .json({ message: "ନାମ, ୟୁଜରନେମ୍ ଏବଂ ପାସୱାର୍ଡ ଜରୁରୀ ଅଟେ ।" });
     }
 
     const existingUser = await User.findOne({
@@ -81,7 +81,7 @@ const signupUser = async (req, res) => {
       if (existingUser.isVerified) {
         return res
           .status(400)
-          .json({ message: "Ye username pehle se use ho raha hai" });
+          .json({ message: "ଏହି ୟୁଜରନେମ୍ ପୂର୍ବରୁ ବ୍ୟବହାର ହେଉଛି ।" });
       }
       // Existing but never verified (e.g. they never entered the OTP) — regenerate a fresh OTP
       const otp = generateOtp();
@@ -97,7 +97,7 @@ const signupUser = async (req, res) => {
       });
 
       return res.status(200).json({
-        message: "Naya OTP bhej diya gaya hai, admin se maang lijiye",
+        message: "ନୂଆ OTP ପଠାଯାଇଛି, ଆଡମିନ୍‌ଙ୍କୁ ମାଗି ନିଅନ୍ତୁ ।",
         username: existingUser.username,
       });
     }
@@ -121,8 +121,7 @@ const signupUser = async (req, res) => {
     });
 
     return res.status(201).json({
-      message:
-        "Signup request bhej di gayi hai. Admin se OTP maang kar yahan daaliye.",
+      message: "ସାଇନ୍‌ଅପ୍ ଅନୁରୋଧ ପଠାଯାଇଛି। ଆଡମିନ୍‌ଙ୍କୁ OTP ମାଗି ଏଠାରେ ଦିଅନ୍ତୁ।",
       username: user.username,
     });
   } catch (error) {
@@ -141,25 +140,25 @@ const verifyOtp = async (req, res) => {
     const { username, otp } = req.body;
 
     if (!username || !otp) {
-      return res.status(400).json({ message: "Username aur OTP daaliye" });
+      return res.status(400).json({ message: "ୟୁଜରନେମ୍ ଏବଂ OTP ଦିଅନ୍ତୁ ।" });
     }
 
     const user = await User.findOne({ username: username.toLowerCase() });
 
     if (!user || !user.otp) {
-      return res
-        .status(400)
-        .json({ message: "Koi pending signup nahi mila is username ke liye" });
+      return res.status(400).json({
+        message: "ଏହି ୟୁଜରନେମ୍ ପାଇଁ କୌଣସି ପେଣ୍ଡିଙ୍ଗ୍ ସାଇନ୍‌ଅପ୍ ମିଳିଲାନି ।",
+      });
     }
 
     if (user.otpExpires < Date.now()) {
-      return res
-        .status(400)
-        .json({ message: "OTP expire ho gaya, dobara signup try karein" });
+      return res.status(400).json({
+        message: "OTP ଏକ୍ସପାୟାର୍ ହୋଇଗଲା, ପୁଣିଥରେ ସାଇନ୍‌ଅପ୍ ଚେଷ୍ଟା କରନ୍ତୁ ।",
+      });
     }
 
     if (user.otp !== otp) {
-      return res.status(400).json({ message: "Galat OTP" });
+      return res.status(400).json({ message: "ଭୁଲ୍ OTP ।" });
     }
 
     user.isVerified = true;
@@ -168,7 +167,7 @@ const verifyOtp = async (req, res) => {
     await user.save();
 
     return res.json({
-      message: "Account activate ho gaya! Ab login kar sakte hain.",
+      message: "ଆକାଉଣ୍ଟ ଆକ୍ଟିଭେଟ୍ ହୋଇଗଲା! ଏବେ ଲଗଇନ୍ କରିପାରିବେ ।",
       _id: user._id,
       name: user.name,
       username: user.username,
@@ -191,7 +190,7 @@ const forgotPassword = async (req, res) => {
     const { username } = req.body;
 
     if (!username) {
-      return res.status(400).json({ message: "Username daaliye" });
+      return res.status(400).json({ message: "ଏହି ୟୁଜରନେମ୍ ମିଳିଲାନି ।" });
     }
 
     const user = await User.findOne({ username: username.toLowerCase() });
@@ -202,7 +201,7 @@ const forgotPassword = async (req, res) => {
     if (!user.isVerified) {
       return res.status(400).json({
         message:
-          "Ye account abhi tak signup verify nahi hua hai, pehle signup complete karein",
+          "ଏହି ଆକାଉଣ୍ଟ ଏପର୍ଯ୍ୟନ୍ତ ସାଇନ୍‌ଅପ୍ ଭେରିଫାଏ ହୋଇନାହିଁ, ପ୍ରଥମେ ସାଇନ୍‌ଅପ୍ ସମ୍ପୂର୍ଣ୍ଣ କରନ୍ତୁ ।",
       });
     }
 
@@ -218,8 +217,7 @@ const forgotPassword = async (req, res) => {
     });
 
     return res.json({
-      message:
-        "OTP admin ke Gmail pe bhej diya gaya hai, admin se maang lijiye",
+      message: "OTP ଆଡମିନ୍‌ଙ୍କ Gmail କୁ ପଠାଯାଇଛି, ଆଡମିନ୍‌ଙ୍କୁ ମାଗି ନିଅନ୍ତୁ ।",
     });
   } catch (error) {
     console.error("forgotPassword error:", error);
@@ -239,14 +237,14 @@ const resetPassword = async (req, res) => {
     if (!username || !otp || !newPassword) {
       return res
         .status(400)
-        .json({ message: "Username, OTP aur naya password daaliye" });
+        .json({ message: "ୟୁଜରନେମ୍, OTP ଏବଂ ନୂଆ ପାସୱାର୍ଡ ଦିଅନ୍ତୁ ।" });
     }
 
     const user = await User.findOne({ username: username.toLowerCase() });
 
     if (!user || !user.otp) {
       return res.status(400).json({
-        message: "Koi pending reset request nahi mila is username ke liye",
+        message: "ଏହି ୟୁଜରନେମ୍ ପାଇଁ କୌଣସି ପେଣ୍ଡିଙ୍ଗ୍ ରିସେଟ୍ ଅନୁରୋଧ ମିଳିଲାନି ।",
       });
     }
 

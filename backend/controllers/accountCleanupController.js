@@ -121,7 +121,7 @@ const previewCleanup = async (req, res) => {
     console.error("previewCleanup error:", error);
     return res
       .status(500)
-      .json({ message: "Preview nahi bana", error: error.message });
+      .json({ message: "ପ୍ରିଭ୍ୟୁ ହେଲାନାହିଁ", error: error.message });
   }
 };
 
@@ -159,7 +159,7 @@ const backupCleanupData = async (req, res) => {
     console.error("backupCleanupData error:", error);
     return res
       .status(500)
-      .json({ message: "Backup nahi bana", error: error.message });
+      .json({ message: "ବ୍ୟାକଅପ୍ ସୃଷ୍ଟି ହୋଇନାହିଁ |", error: error.message });
   }
 };
 
@@ -179,7 +179,7 @@ const executeCleanup = async (req, res) => {
 
     if (confirmText !== `DELETE ${beforeMonth}`) {
       return res.status(400).json({
-        message: `Confirm text galat hai. Exactly "DELETE ${beforeMonth}" likhein.`,
+        message: `କନଫର୍ମ ଟେକ୍ସଟ୍ ଭୁଲ୍ ଅଛି । Exactly "DELETE ${beforeMonth}" likhein.`,
       });
     }
 
@@ -212,7 +212,7 @@ const executeCleanup = async (req, res) => {
     );
 
     return res.json({
-      message: "Cleanup ho gaya",
+      message: "କ୍ଲିନଅପ୍ ହୋଇଗଲା ।",
       billsDeleted: billsResult.deletedCount || 0,
       visitLogsDeleted,
       previousDueReset,
@@ -221,7 +221,7 @@ const executeCleanup = async (req, res) => {
     console.error("executeCleanup error:", error);
     return res
       .status(500)
-      .json({ message: "Cleanup fail ho gaya", error: error.message });
+      .json({ message: "କ୍ଲିନଅପ୍ ଫେଲ୍ ହୋଇଗଲା ।", error: error.message });
   }
 };
 

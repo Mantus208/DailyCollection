@@ -35,7 +35,7 @@ const Login = () => {
     } catch (err) {
       setError(
         err.response?.data?.message ||
-          "Login nahi ho paya. Username ya password check karein.",
+          "ଲଗ୍‌ଇନ୍ ବିଫଳ ହେଲା। ୟୁଜର୍‌ନେମ୍ କିମ୍ବା ପାସୱାର୍ଡ୍ ଯାଞ୍ଚ କରନ୍ତୁ।",
       );
     } finally {
       setIsSubmitting(false);

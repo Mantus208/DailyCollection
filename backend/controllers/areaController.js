@@ -79,7 +79,7 @@ const getAreaById = async (req, res) => {
 
     if (!area) {
       return res.status(404).json({
-        message: "Area nahi mila",
+        message: "ଏରିଆ ମିଳିଲାନି ।",
       });
     }
 
@@ -90,7 +90,7 @@ const getAreaById = async (req, res) => {
 
       if (!hasAccess) {
         return res.status(403).json({
-          message: "Aapko is area ka access nahi hai",
+          message: "ଏହି ଏରିଆକୁ ପ୍ରବେଶ କରିବା ପାଇଁ ଆପଣଙ୍କ ପାଖରେ ଅନୁମତି ନାହିଁ ।",
         });
       }
     }
@@ -127,7 +127,7 @@ const getPaytvFranchisees = async (req, res) => {
     console.error("getPaytvFranchisees error:", error);
 
     return res.status(502).json({
-      message: "PayTV Franchise list load nahi hui.",
+      message: "PayTV ଫ୍ରାଞ୍ଚାଇଜ୍ ଲିଷ୍ଟ ଲୋଡ୍ ହେଲାନି ।",
       error: error.message,
     });
   }
@@ -143,7 +143,7 @@ const createArea = async (req, res) => {
 
     if (!name) {
       return res.status(400).json({
-        message: "Area ka naam zaroori hai",
+        message: "ଏରିଆ ନାମ ଜରୁରୀ ଅଟେ ।",
       });
     }
 
@@ -151,7 +151,7 @@ const createArea = async (req, res) => {
 
     if (!Number.isFinite(franchiseId) || franchiseId <= 0) {
       return res.status(400).json({
-        message: "PayTV Franchisee select karna zaroori hai",
+        message: "ayTV ଫ୍ରାଞ୍ଚାଇଜ୍ ସିଲେକ୍ଟ କରିବା ଜରୁରୀ ଅଟେ ।",
       });
     }
 
@@ -161,7 +161,7 @@ const createArea = async (req, res) => {
 
     if (existing) {
       return res.status(400).json({
-        message: "Ye area pehle se ban chuka hai",
+        message: "ଏହି ଏରିଆ ପୂର୍ବରୁ ତିଆରି ହୋଇସାରିଛି ।",
       });
     }
 
@@ -209,7 +209,7 @@ const updatePaytvMapping = async (req, res) => {
 
     if (!Number.isFinite(franchiseId) || franchiseId <= 0) {
       return res.status(400).json({
-        message: "Valid PayTV Franchisee select karein.",
+        message: "ଏକ ବୈଧ PayTV ଫ୍ରାଞ୍ଚାଇଜ୍ ସିଲେକ୍ଟ କରନ୍ତୁ ।",
       });
     }
 
@@ -220,7 +220,7 @@ const updatePaytvMapping = async (req, res) => {
 
     if (!area) {
       return res.status(404).json({
-        message: "Area nahi mila",
+        message: "ଏରିଆ ମିଳିଲାନି ।",
       });
     }
 
@@ -236,18 +236,18 @@ const updatePaytvMapping = async (req, res) => {
     await logActivity(
       req.user,
       "area_paytv_mapping",
-      `${area.name} ka PayTV Franchise ${franchiseId} set kiya`,
+      `${area.name} ର PayTV ଫ୍ରାଞ୍ଚାଇଜ୍ ${franchiseId} ସେଟ୍ କରାଗଲା ।`,
     );
 
     return res.json({
-      message: "PayTV Franchise mapping save ho gayi.",
+      message: "PayTV ଫ୍ରାଞ୍ଚାଇଜ୍ ମ୍ୟାପିଙ୍ଗ୍ ସେଭ୍ ହୋଇଗଲା ।",
       area,
     });
   } catch (error) {
     console.error("updatePaytvMapping error:", error);
 
     return res.status(500).json({
-      message: "PayTV mapping save nahi hui.",
+      message: "PayTV ମ୍ୟାପିଙ୍ଗ୍ ସେଭ୍ ହେଲାନି ।",
       error: error.message,
     });
   }
