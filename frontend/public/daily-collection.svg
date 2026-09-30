@@ -1,0 +1,62 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none"
+  xmlns="http://www.w3.org/2000/svg">
+
+  <defs>
+    <linearGradient id="bg" x1="40" y1="40" x2="470" y2="470">
+      <stop offset="0" stop-color="#2563EB"/>
+      <stop offset="1" stop-color="#1D4ED8"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+
+  <!-- Document -->
+  <rect x="116" y="88" width="220" height="292" rx="28" fill="white"/>
+
+  <rect x="116" y="88" width="220" height="62" rx="28" fill="#DBEAFE"/>
+  <rect x="116" y="122" width="220" height="28" fill="#DBEAFE"/>
+
+  <!-- Document lines -->
+  <rect x="150" y="178" width="130" height="16" rx="8" fill="#CBD5E1"/>
+  <rect x="150" y="218" width="110" height="16" rx="8" fill="#CBD5E1"/>
+  <rect x="150" y="258" width="125" height="16" rx="8" fill="#CBD5E1"/>
+
+  <!-- Check marks -->
+  <circle cx="142" cy="186" r="17" fill="#10B981"/>
+  <path d="M133 186L140 193L153 178"
+    stroke="white" stroke-width="7"
+    stroke-linecap="round" stroke-linejoin="round"/>
+
+  <circle cx="142" cy="226" r="17" fill="#10B981"/>
+  <path d="M133 226L140 233L153 218"
+    stroke="white" stroke-width="7"
+    stroke-linecap="round" stroke-linejoin="round"/>
+
+  <circle cx="142" cy="266" r="17" fill="#10B981"/>
+  <path d="M133 266L140 273L153 258"
+    stroke="white" stroke-width="7"
+    stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Rupee coin -->
+  <circle cx="350" cy="340" r="88" fill="#FBBF24"/>
+  <circle cx="350" cy="340" r="72" fill="#F59E0B"/>
+
+  <text x="350" y="369"
+    text-anchor="middle"
+    font-family="Arial, sans-serif"
+    font-size="82"
+    font-weight="700"
+    fill="white">₹</text>
+
+  <!-- Growth arrow -->
+  <path d="M310 180C356 150 389 118 423 86"
+    stroke="#34D399"
+    stroke-width="24"
+    stroke-linecap="round"/>
+
+  <path d="M394 88L426 84L421 116"
+    stroke="#34D399"
+    stroke-width="18"
+    stroke-linecap="round"
+    stroke-linejoin="round"/>
+</svg>
