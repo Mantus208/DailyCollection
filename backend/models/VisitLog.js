@@ -16,7 +16,7 @@ const visitLogSchema = new mongoose.Schema(
 
     purpose: {
       type: String,
-      enum: ["collection", "service", "other"],
+      enum: ["collection", "service", "concession", "other"],
       default: "collection",
     },
 

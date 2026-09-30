@@ -1,6 +1,8 @@
 const { Resend } = require("resend");
 
 const resend = new Resend(process.env.RESEND_API_KEY);
+console.log("📧 EMAIL_FROM runtime:", JSON.stringify(process.env.EMAIL_FROM));
+console.log("📧 ADMIN_EMAIL runtime:", JSON.stringify(process.env.ADMIN_EMAIL));
 
 // Sends the signup OTP to the admin's email
 const sendOtpEmail = async ({ requesterName, requesterUsername, otp }) => {

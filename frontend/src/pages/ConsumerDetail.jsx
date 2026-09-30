@@ -1,6 +1,13 @@
 import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { CheckCircle2, AlertCircle } from "lucide-react"; // NAYA IMPORT 🌟
+import {
+  CheckCircle2,
+  AlertCircle,
+  Phone,
+  MoreVertical,
+  X,
+  ArrowLeft,
+} from "lucide-react"; // NAYA IMPORT 🌟
 import api from "../api/axios";
 
 const formatDate = (d) => (d ? new Date(d).toLocaleDateString("en-IN") : "-");
@@ -909,12 +916,18 @@ const ConsumerDetail = () => {
           {/* =======================================================
             CLEAN HEADER
           ======================================================== */}
-          <div className="sticky top-0 z-30 border-b border-slate-200 bg-white">
+          <div
+            className="sticky top-0 z-30 border-b border-slate-200 bg-white cursor-pointer transition hover:bg-slate-50"
+            onClick={() => setActionDrawer("info")} // 🟢 YEH CLICK EVENT ADD KIYA
+          >
             <div className="flex items-center justify-between px-4 py-4 md:px-6">
               <div className="flex min-w-0 items-center gap-4">
                 <button
                   type="button"
-                  onClick={() => navigate(`/area/${areaId}/search`)}
+                  onClick={(e) => {
+                    e.stopPropagation(); // 🟢 YEH CLICK EVENT ADD KIYA
+                    navigate(`/area/${areaId}/search`);
+                  }}
                   className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-600 lg:hidden"
                 >
                   ←
@@ -940,21 +953,25 @@ const ConsumerDetail = () => {
                 {consumer.mobile && consumer.mobile !== "-" && (
                   <button
                     type="button"
-                    onClick={() =>
-                      (window.location.href = `tel:${consumer.mobile}`)
-                    }
+                    onClick={(e) => {
+                      e.stopPropagation(); // 🟢 YEH CLICK EVENT ADD KIYA
+                      window.location.href = `tel:${consumer.mobile}`;
+                    }}
                     className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-600 transition hover:bg-slate-200"
                   >
-                    📞
+                    <Phone size={16} /> {/* 🟢 YEH ICON CHANGE KIYA */}
                   </button>
                 )}
 
                 <button
                   type="button"
-                  onClick={() => setActionDrawer("more")}
+                  onClick={(e) => {
+                    e.stopPropagation(); // 🟢 YEH CLICK EVENT ADD KIYA
+                    setActionDrawer("more");
+                  }}
                   className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-xl text-slate-600 transition hover:bg-slate-200"
                 >
-                  ⋮
+                  <MoreVertical size={16} /> {/* 🟢 YEH ICON CHANGE KIYA */}
                 </button>
               </div>
             </div>
@@ -1233,7 +1250,7 @@ const ConsumerDetail = () => {
           </div>
 
           {/* =======================================================
-            RIGHT ACTION DRAWER (Unchanged)
+            RIGHT ACTION DRAWER (Updated)
           ======================================================== */}
           {actionDrawer && (
             <>
@@ -1252,52 +1269,63 @@ const ConsumerDetail = () => {
                     : "bottom-0 left-0 right-0 max-h-[85vh] rounded-t-3xl lg:bottom-0 lg:left-auto lg:top-0 lg:h-full lg:max-h-none lg:w-[400px] lg:rounded-none"
                 }`}
               >
-                {/* Drawer Header */}
-                <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-100 bg-white/95 px-6 py-5 backdrop-blur">
-                  <div>
-                    <h2 className="text-base font-extrabold text-slate-900">
-                      {actionDrawer === "collect" &&
-                        (isPaid ? "Advance Payment" : "Collect Payment")}
-                      {actionDrawer === "due" && "Due / Follow-up"}
-                      {actionDrawer === "concession" && "Concession"}
-                      {actionDrawer === "editAmount" && "Edit Amount"}
-                      {actionDrawer === "info" && "Customer Information"}
-                      {actionDrawer === "stock" && "Sell Stock Item"}
-                      {actionDrawer === "service" && "Service / Visit"}
-                      {actionDrawer === "complaint" && "Complaint"}
-                      {actionDrawer === "history" && "Transaction History"}
-                      {actionDrawer === "more" && "More Actions"}
-                    </h2>
+                {/* 🟢 YEH DRAWER HEADER UPDATE KIYA GAYA HAI */}
+                <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-100 bg-white/95 px-6 py-4 backdrop-blur">
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        // Agar inme se kisi sub-menu me hain, toh wapas 'more' list me bhejo
+                        if (
+                          [
+                            "info",
+                            "editAmount",
+                            "stock",
+                            "service",
+                            "complaint",
+                            "history",
+                          ].includes(actionDrawer)
+                        ) {
+                          setActionDrawer("more");
+                        } else {
+                          // Warna drawer band kar do
+                          setActionDrawer(null);
+                        }
+                      }}
+                      className="grid h-8 w-8 place-items-center rounded-xl bg-white border border-slate-200 text-slate-600 shadow-sm transition hover:bg-slate-100 hover:text-slate-900"
+                      title="Back"
+                    >
+                      <ArrowLeft size={16} strokeWidth={2} />
+                    </button>
 
-                    <p className="mt-0.5 text-xs font-semibold text-slate-500">
-                      {consumer.name}
-                    </p>
+                    <div>
+                      <h2 className="text-sm font-extrabold uppercase tracking-wider text-slate-800">
+                        {actionDrawer === "collect" &&
+                          (isPaid ? "Advance Payment" : "Collect Payment")}
+                        {actionDrawer === "due" && "Due / Follow-up"}
+                        {actionDrawer === "concession" && "Concession"}
+                        {actionDrawer === "editAmount" && "Edit Amount"}
+                        {actionDrawer === "info" && "Customer Information"}
+                        {actionDrawer === "stock" && "Sell Stock Item"}
+                        {actionDrawer === "service" && "Service / Visit"}
+                        {actionDrawer === "complaint" && "Complaint"}
+                        {actionDrawer === "history" && "Transaction History"}
+                        {actionDrawer === "more" && "More Actions"}
+                      </h2>
+                      <p className="text-xs font-medium text-slate-400">
+                        {consumer.name}
+                      </p>
+                    </div>
                   </div>
 
                   <button
                     type="button"
                     onClick={() => setActionDrawer(null)}
-                    className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-600 transition hover:bg-slate-200"
+                    className="grid h-8 w-8 place-items-center rounded-xl bg-white border border-slate-200 text-slate-400 shadow-sm transition hover:bg-red-50 hover:border-red-200 hover:text-red-600"
                   >
-                    ×
+                    <X size={16} strokeWidth={2} />{" "}
+                    {/* 🟢 YEH ICON CHANGE KIYA */}
                   </button>
-                  {[
-                    "info",
-                    "editAmount",
-                    "stock",
-                    "service",
-                    "complaint",
-                    "history",
-                  ].includes(actionDrawer) && (
-                    <button
-                      type="button"
-                      onClick={() => setActionDrawer("more")}
-                      className="flex w-full items-center gap-2 border-b border-slate-100 bg-slate-50 px-5 py-2.5 text-left text-xs font-semibold text-slate-600 hover:bg-slate-100"
-                    >
-                      <span className="text-sm">←</span>
-                      Menu par wapas
-                    </button>
-                  )}
                 </div>
 
                 {/* =================================================

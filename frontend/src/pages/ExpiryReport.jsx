@@ -1,26 +1,35 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import api from "../api/axios";
 
 const formatDate = (value) => {
   if (!value) return "-";
 
-  return new Date(value).toLocaleDateString("en-IN");
+  const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+
+  if (!match) return String(value);
+
+  const [, yyyy, mm, dd] = match;
+
+  return `${dd}/${mm}/${yyyy}`;
 };
 
-const statusClass = (status) => {
-  if (status === "Expired") {
+const statusClass = (row) => {
+  const days = Number(row.days);
+
+  if (days < 0) {
     return "bg-red-50 text-red-700";
   }
 
-  if (status === "3 Days") {
+  if (days <= 3) {
     return "bg-orange-50 text-orange-700";
   }
 
-  if (status === "7 Days") {
+  if (days <= 7) {
     return "bg-amber-50 text-amber-700";
   }
 
-  if (status === "15 Days") {
+  if (days <= 15) {
     return "bg-yellow-50 text-yellow-700";
   }
 
@@ -36,8 +45,26 @@ const ExpiryReport = () => {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
   const [groupBy, setGroupBy] = useState("area");
+  const lastLoadKey = useRef("");
+  const loadingRef = useRef(false);
+  const [searchParams] = useSearchParams();
+
+  const urlDays = Number(searchParams.get("days") ?? 0);
+
+  const [days, setDays] = useState(Number.isFinite(urlDays) ? urlDays : 0);
+
+  const todayOnly = searchParams.get("today") === "1";
+
+  const initialDays = Number(searchParams.get("days") ?? 0);
 
   const loadReport = async () => {
+    if (loadingRef.current) {
+      console.log("⏳ Expiry report already loading...");
+      return;
+    }
+
+    loadingRef.current = true;
+
     try {
       setLoading(true);
       setError("");
@@ -45,33 +72,77 @@ const ExpiryReport = () => {
       const { data } = await api.get("/reports/expiry", {
         params: {
           q: search,
-          status,
           groupBy,
+          days,
         },
       });
 
       setRows(Array.isArray(data?.rows) ? data.rows : []);
-
       setSummary(data?.summary || {});
     } catch (err) {
-      setError(err.response?.data?.message || "Expiry report load nahi hua");
+      setRows([]);
+      setSummary({});
+      setError(
+        err.response?.data?.message ||
+          err.message ||
+          "Expiry report load nahi hua",
+      );
     } finally {
+      loadingRef.current = false;
       setLoading(false);
     }
   };
 
   useEffect(() => {
     loadReport();
-  }, [status, groupBy]);
+  }, [groupBy, days]);
 
   const filteredRows = useMemo(() => {
     const q = search.trim().toLowerCase();
 
-    if (!q) return rows;
+    let result = rows;
 
-    return rows.filter((row) =>
+    // -----------------------------
+    // STATUS FILTER
+    // -----------------------------
+    if (status === "expired") {
+      result = result.filter((row) => Number(row.days) < 0);
+    }
+
+    if (status === "3days") {
+      result = result.filter(
+        (row) => Number(row.days) >= 0 && Number(row.days) <= 3,
+      );
+    }
+
+    if (status === "7days") {
+      result = result.filter(
+        (row) => Number(row.days) > 3 && Number(row.days) <= 7,
+      );
+    }
+
+    if (status === "15days") {
+      result = result.filter(
+        (row) => Number(row.days) > 7 && Number(row.days) <= 15,
+      );
+    }
+
+    if (status === "30days") {
+      result = result.filter(
+        (row) => Number(row.days) > 15 && Number(row.days) <= 30,
+      );
+    }
+
+    // -----------------------------
+    // SEARCH
+    // -----------------------------
+    if (!q) {
+      return result;
+    }
+
+    return result.filter((row) =>
       [
-        row.customerId,
+        row.consumerId,
         row.customerName,
         row.area,
         row.stbNo,
@@ -82,7 +153,7 @@ const ExpiryReport = () => {
         .toLowerCase()
         .includes(q),
     );
-  }, [rows, search]);
+  }, [rows, search, status]);
 
   const groupedRows = useMemo(() => {
     if (groupBy === "franchisee") {
@@ -167,16 +238,26 @@ const ExpiryReport = () => {
             />
 
             <select
-              value={status}
-              onChange={(e) => setStatus(e.target.value)}
+              value={days}
+              onChange={(e) => {
+                const newDays = Number(e.target.value);
+
+                setDays(newDays);
+
+                window.history.replaceState(
+                  null,
+                  "",
+                  `/reports/expiry?days=${newDays}`,
+                );
+              }}
               className="rounded-xl border border-slate-200 px-3 py-3 text-sm"
             >
-              <option value="">All Expiry</option>
-              <option value="expired">Expired</option>
-              <option value="3days">Within 3 Days</option>
-              <option value="7days">Within 7 Days</option>
-              <option value="15days">Within 15 Days</option>
-              <option value="30days">Within 30 Days</option>
+              <option value={0}>Today</option>
+              <option value={1}>Tomorrow</option>
+              <option value={3}>Within 3 Days</option>
+              <option value={7}>Within 7 Days</option>
+              <option value={15}>Within 15 Days</option>
+              <option value={30}>Within 30 Days</option>
             </select>
 
             <select
@@ -243,7 +324,7 @@ const ExpiryReport = () => {
                         className="border-b border-slate-50 hover:bg-slate-50"
                       >
                         <td className="px-4 py-3 text-xs font-bold text-slate-800">
-                          {row.customerId}
+                          {row.consumerId}
                         </td>
 
                         <td className="px-4 py-3 text-xs font-semibold text-slate-700">
@@ -278,7 +359,7 @@ const ExpiryReport = () => {
                         <td className="px-4 py-3">
                           <span
                             className={`rounded-full px-2.5 py-1 text-[9px] font-bold ${statusClass(
-                              row.status,
+                              row,
                             )}`}
                           >
                             {row.status}

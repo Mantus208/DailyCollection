@@ -97,7 +97,7 @@ const Sidebar = () => {
         {
           label: "Expiry Report",
           icon: CalendarClock,
-          to: "/reports/expiry",
+          to: "/reports/expiry?days=0",
         },
 
         {
