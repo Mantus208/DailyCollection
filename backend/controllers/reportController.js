@@ -260,6 +260,49 @@ const defaulters = async (req, res) => {
       .json({ message: "Server error", error: error.message });
   }
 };
+// @route  GET /api/reports/payment-history?areaId=&from=&to=
+// @desc   Saare collection ki list, date-range filter ke saath
+const paymentHistory = async (req, res) => {
+  try {
+    const { areaId, from, to } = req.query;
+    if (!areaId) return res.status(400).json({ message: "areaId zaroori hai" });
+
+    const filter = {
+      outcome: "paid",
+      amountCollected: { $gt: 0 },
+      reversed: { $ne: true },
+    };
+
+    if (from || to) {
+      filter.createdAt = {};
+      if (from) filter.createdAt.$gte = new Date(`${from}T00:00:00`);
+      if (to) filter.createdAt.$lte = new Date(`${to}T23:59:59`);
+    }
+
+    const visits = await VisitLog.find(filter)
+      .populate({
+        path: "consumerId",
+        select: "name consumerId areaId",
+        match: { areaId },
+      })
+      .populate("visitedBy", "name")
+      .sort({ createdAt: -1 })
+      .limit(1000);
+
+    const filtered = visits.filter((v) => v.consumerId);
+    const total = filtered.reduce(
+      (sum, v) => sum + (v.amountCollected || 0),
+      0,
+    );
+
+    return res.json({ total, count: filtered.length, visits: filtered });
+  } catch (error) {
+    console.error("paymentHistory error:", error);
+    return res
+      .status(500)
+      .json({ message: "Server error", error: error.message });
+  }
+};
 const billingSummary = async (req, res) => {
   try {
     const { areaId, month } = req.query;
@@ -565,5 +608,6 @@ module.exports = {
   defaulters,
   recentActivity,
   billingSummary,
+  paymentHistory,
   monthlyCashCollection,
 };

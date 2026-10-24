@@ -6,6 +6,7 @@ const {
   getReminders,
   defaulters,
   recentActivity,
+  paymentHistory,
   billingSummary,
   monthlyCashCollection,
 } = require("../controllers/reportController");
@@ -13,6 +14,8 @@ const {
 const { protect } = require("../middleware/authMiddleware");
 
 const router = express.Router();
+
+router.get("/payment-history", protect, paymentHistory);
 
 router.get("/today-collection", protect, todayCollection);
 

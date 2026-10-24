@@ -8,6 +8,7 @@ import {
   MessageSquareWarning,
   Package,
   FileText,
+  History,
   Upload,
   UsersRound,
   Building2,
@@ -93,6 +94,12 @@ const Sidebar = () => {
               },
             ]
           : []),
+
+        {
+          label: "Payment History",
+          icon: History,
+          to: "/area/${areaId}/payment-history",
+        },
 
         {
           label: "Expiry Report",

@@ -1083,16 +1083,24 @@ const collectPayment = async (req, res) => {
 
     const month = getCurrentMonth();
 
-    // -----------------------------------------
-    // CURRENT MONTH BILL
-    // -----------------------------------------
+    //Current month ka bill nikalenge, ya agar nahi hai to create karenge (agar purana due nahi hai)
+
+    // Agar koi purana unpaid bill hai (jaise September), to October ka naya bill
+    // AUTO-CREATE nahi karenge — jab tak PayTV se October ka asli bill sync na ho.
+    // Isse "phantom next-month due" nahi banega jo sirf calendar date ki wajah se
+    // ban jata tha, bina asli package/bill aaye.
+    const hasOlderUnpaidBill = await MonthlyBill.exists({
+      consumerId: consumer._id,
+      month: { $lt: month },
+      status: { $ne: "paid" },
+    });
 
     let currentBill = await MonthlyBill.findOne({
       consumerId: consumer._id,
       month,
     });
 
-    if (!currentBill) {
+    if (!currentBill && !hasOlderUnpaidBill) {
       const currentPackageAmount = Number(consumer.monthlyAmount || 0);
 
       if (currentPackageAmount <= 0) {
@@ -1114,15 +1122,23 @@ const collectPayment = async (req, res) => {
       });
     }
 
+    // currentBill abhi bhi na ho (purana due pending hai, naya bill abhi nahi bana)
+    // to is collection ka pura paisa sirf purane due + advance me jayega.
+    const hasCurrentBill = Boolean(currentBill);
+
     // -----------------------------------------
     // CURRENT MONTH BALANCE
     // -----------------------------------------
 
-    const currentAmount = Number(currentBill.amount || 0);
+    const currentAmount = hasCurrentBill ? Number(currentBill.amount || 0) : 0;
 
-    const currentPaid = Number(currentBill.amountPaid || 0);
+    const currentPaid = hasCurrentBill
+      ? Number(currentBill.amountPaid || 0)
+      : 0;
 
-    const currentConcession = Number(currentBill.concessionAmount || 0);
+    const currentConcession = hasCurrentBill
+      ? Number(currentBill.concessionAmount || 0)
+      : 0;
 
     const currentBalance = Math.max(
       currentAmount - currentPaid - currentConcession,
@@ -1202,6 +1218,11 @@ const collectPayment = async (req, res) => {
 
     let remainingCollection = paidNow;
 
+    // Ek payment ka allocation track karenge.
+    // Collection history me inki alag entries nahi banengi.
+    let collectedFromOldBills = 0;
+    let collectedFromManualDue = 0;
+
     // -----------------------------------------
     // OLD MONTHLY BILLS
     // -----------------------------------------
@@ -1241,17 +1262,7 @@ const collectPayment = async (req, res) => {
 
       await oldBill.save();
 
-      // Old due collection history
-      await VisitLog.create({
-        consumerId: consumer._id,
-        visitedBy: req.user._id,
-        purpose: "collection",
-        outcome: "paid",
-        amountCollected: collectFromOld,
-        customerRemark: `Previous due ${oldBill.month} se adjust kiya`,
-        followUpDate: null,
-        reversed: false,
-      });
+      collectedFromOldBills += collectFromOld;
 
       remainingCollection -= collectFromOld;
     }
@@ -1261,28 +1272,21 @@ const collectPayment = async (req, res) => {
     // -----------------------------------------
 
     if (remainingCollection > 0 && consumer.previousDue > 0) {
-      const collectFromManualDue = Math.min(
+      const collectManualNow = Math.min(
         remainingCollection,
         Number(consumer.previousDue || 0),
       );
 
-      consumer.previousDue =
-        Number(consumer.previousDue || 0) - collectFromManualDue;
+      consumer.previousDue = Math.max(
+        Number(consumer.previousDue || 0) - collectManualNow,
+        0,
+      );
 
       await consumer.save();
 
-      await VisitLog.create({
-        consumerId: consumer._id,
-        visitedBy: req.user._id,
-        purpose: "collection",
-        outcome: "paid",
-        amountCollected: collectFromManualDue,
-        customerRemark: "Manual previous due adjust kiya",
-        followUpDate: null,
-        reversed: false,
-      });
+      collectedFromManualDue += collectManualNow;
 
-      remainingCollection -= collectFromManualDue;
+      remainingCollection -= collectManualNow;
     }
 
     // -----------------------------------------
@@ -1291,7 +1295,9 @@ const collectPayment = async (req, res) => {
 
     const currentCollection = Math.min(remainingCollection, currentBalance);
 
-    currentBill.amountPaid = currentPaid + currentCollection;
+    if (hasCurrentBill) {
+      currentBill.amountPaid = currentPaid + currentCollection;
+    }
     // -----------------------------------------
     // EXTRA COLLECTION → ADVANCE
     // -----------------------------------------
@@ -1306,84 +1312,115 @@ const collectPayment = async (req, res) => {
         Number(consumer.advanceAmount || 0) + advanceReceived;
 
       await consumer.save();
-
-      // Advance cash ki history bhi rakhein
-      // taaki total collection report mein amount miss na ho.
-      await VisitLog.create({
-        consumerId: consumer._id,
-        visitedBy: req.user._id,
-        purpose: "collection",
-        outcome: "paid",
-        amountCollected: advanceReceived,
-        customerRemark: "Advance payment received for future month",
-        followUpDate: null,
-        reversed: false,
-      });
     }
 
     // -----------------------------------------
-    // CURRENT MONTH CONCESSION
+    // CURRENT MONTH CONCESSION + FINAL STATUS
     // -----------------------------------------
 
-    currentBill.concessionAmount = currentConcession + concessionNow;
+    let finalCurrentBalance = 0;
 
-    if (concessionRemark.trim()) {
-      currentBill.concessionRemark = concessionRemark.trim();
+    if (hasCurrentBill) {
+      currentBill.concessionAmount = currentConcession + concessionNow;
+
+      if (concessionRemark.trim()) {
+        currentBill.concessionRemark = concessionRemark.trim();
+      }
+
+      const finalCurrentSettled =
+        Number(currentBill.amountPaid || 0) +
+        Number(currentBill.concessionAmount || 0);
+
+      finalCurrentBalance = Math.max(currentAmount - finalCurrentSettled, 0);
+
+      if (currentAmount > 0 && finalCurrentBalance <= 0) {
+        currentBill.status = "paid";
+        currentBill.paidDate = new Date();
+        currentBill.dueRemark = "";
+        currentBill.followUpDate = null;
+      } else {
+        currentBill.status = "due";
+        currentBill.dueRemark = `₹${finalCurrentBalance} baaki hai`;
+      }
+
+      currentBill.lastEditedBy = req.user._id;
+      currentBill.lastEditedAt = new Date();
+
+      await currentBill.save();
     }
 
     // -----------------------------------------
-    // CURRENT MONTH FINAL STATUS
+    // FINAL OUTSTANDING AFTER PAYMENT
     // -----------------------------------------
 
-    const finalCurrentSettled =
-      Number(currentBill.amountPaid || 0) +
-      Number(currentBill.concessionAmount || 0);
+    const updatedPreviousBillsDue = previousBills.reduce((total, bill) => {
+      const balance = Math.max(
+        Number(bill.amount || 0) -
+          Number(bill.amountPaid || 0) -
+          Number(bill.concessionAmount || 0),
+        0,
+      );
 
-    const finalCurrentBalance = Math.max(
-      currentAmount - finalCurrentSettled,
-      0,
-    );
+      return total + balance;
+    }, 0);
 
-    if (currentAmount > 0 && finalCurrentBalance <= 0) {
-      currentBill.status = "paid";
-      currentBill.paidDate = new Date();
-      currentBill.dueRemark = "";
-      currentBill.followUpDate = null;
-    } else {
-      currentBill.status = "due";
+    const remainingManualPreviousDue = Number(consumer.previousDue || 0);
 
-      currentBill.dueRemark = `₹${finalCurrentBalance} baaki hai`;
+    const remainingPreviousDue =
+      updatedPreviousBillsDue + remainingManualPreviousDue;
+
+    const remainingCurrentDue = hasCurrentBill ? finalCurrentBalance : 0;
+
+    const totalOutstandingAfterPayment =
+      remainingPreviousDue + remainingCurrentDue;
+
+    // -----------------------------------------
+    // ONE HISTORY ENTRY FOR THE FULL PAYMENT
+    // -----------------------------------------
+
+    const collectionNotes = [];
+
+    if (collectedFromOldBills > 0) {
+      collectionNotes.push(`Previous bills ₹${collectedFromOldBills} adjusted`);
     }
 
-    currentBill.lastEditedBy = req.user._id;
-    currentBill.lastEditedAt = new Date();
-
-    await currentBill.save();
-
-    // -----------------------------------------
-    // CURRENT MONTH COLLECTION HISTORY
-    // -----------------------------------------
+    if (collectedFromManualDue > 0) {
+      collectionNotes.push(
+        `Manual previous due ₹${collectedFromManualDue} adjusted`,
+      );
+    }
 
     if (currentCollection > 0) {
-      await VisitLog.create({
-        consumerId: consumer._id,
-        visitedBy: req.user._id,
-        purpose: "collection",
-        outcome: finalCurrentBalance <= 0 ? "paid" : "promised_later",
-        amountCollected: currentCollection,
-
-        customerRemark:
-          concessionNow > 0
-            ? `Collection ₹${currentCollection}. ` +
-              `Concession ₹${concessionNow}` +
-              (concessionRemark.trim() ? ` — ${concessionRemark.trim()}` : "")
-            : "",
-
-        followUpDate: null,
-
-        reversed: false,
-      });
+      collectionNotes.push(`Current package ₹${currentCollection} adjusted`);
     }
+
+    if (advanceReceived > 0) {
+      collectionNotes.push(`Advance ₹${advanceReceived}`);
+    }
+
+    if (concessionNow > 0) {
+      collectionNotes.push(
+        `Concession ₹${concessionNow}` +
+          (concessionRemark.trim() ? ` — ${concessionRemark.trim()}` : ""),
+      );
+    }
+
+    await VisitLog.create({
+      consumerId: consumer._id,
+      visitedBy: req.user._id,
+      purpose: "collection",
+
+      outcome: totalOutstandingAfterPayment <= 0 ? "paid" : "promised_later",
+
+      // Actual payment ek hi entry me
+      amountCollected: paidNow,
+
+      // Allocation ka detail remark me rahega
+      customerRemark: collectionNotes.join(" | "),
+
+      followUpDate: null,
+      reversed: false,
+    });
 
     // -----------------------------------------
     // ACTIVITY LOG
@@ -1409,19 +1446,20 @@ const collectPayment = async (req, res) => {
     // -----------------------------------------
 
     return res.json({
-      ...currentBill.toObject(),
+      ...(hasCurrentBill ? currentBill.toObject() : {}),
 
       previousDue: Number(consumer.previousDue || 0),
-      previousBillsDue,
-      totalPreviousDue,
-      totalOutstanding,
+
+      // Payment ke baad ke outstanding amounts
+      previousBillsDue: updatedPreviousBillsDue,
+      totalPreviousDue: remainingPreviousDue,
+      totalOutstanding: totalOutstandingAfterPayment,
 
       currentCollection,
       totalCollected: paidNow,
       concessionGiven: concessionNow,
-      finalCurrentBalance,
+      finalCurrentBalance: remainingCurrentDue,
 
-      // IMPORTANT
       advanceAmount: Number(consumer.advanceAmount || 0),
 
       consumerId: consumer._id,
