@@ -8,6 +8,7 @@ import {
   MessageSquareWarning,
   Package,
   FileText,
+  ClipboardList,
   History,
   Upload,
   UsersRound,
@@ -101,6 +102,12 @@ const Sidebar = () => {
           to: "/area/${areaId}/payment-history",
         },
 
+        {
+          label: "Due List",
+          icon: ClipboardList,
+          to: "/due-list",
+        },
+        
         {
           label: "Expiry Report",
           icon: CalendarClock,

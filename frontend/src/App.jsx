@@ -21,6 +21,7 @@ import AppLayout from "./components/AppLayout";
 import PackagePricing from "./pages/PackagePricing";
 import CollectionEntry from "./pages/CollectionEntry";
 import ExpiryReport from "./pages/ExpiryReport";
+import DueList from "./pages/DueList";
 import AccountCleanup from "./pages/AccountCleanup";
 import PaymentHistory from "./pages/PaymentHistory";
 
@@ -51,6 +52,7 @@ function App() {
         <Route path="/area/:areaId" element={<Dashboard />} />
         <Route path="/area/:areaId/search" element={<ConsumerSearch />} />
         <Route path="/reports/expiry" element={<ExpiryReport />} />
+        <Route path="/due-list" element={<DueList />} />
         <Route path="/area/:areaId/collection" element={<CollectionEntry />} />
         <Route path="/area/:areaId/reports" element={<Reports />} />
         <Route path="/area/:areaId/complaints" element={<Complaints />} />

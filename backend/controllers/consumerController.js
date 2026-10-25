@@ -4,7 +4,7 @@ const VisitLog = require("../models/VisitLog");
 const Area = require("../models/Area");
 const { getCurrentMonth } = require("../utils/dateHelpers");
 const { logActivity } = require("../utils/logActivity");
-
+const User = require("../models/User");
 const PackagePrice = require("../models/PackagePrice");
 const {
   makePackageKey,
@@ -2248,7 +2248,190 @@ const getHistory = async (req, res) => {
       .json({ message: "Server error", error: error.message });
   }
 };
+const getDueList = async (req, res) => {
+  try {
+    // -----------------------------------------
+    // 1. USER AND AREA PERMISSION
+    // -----------------------------------------
 
+    const user = await User.findById(req.user._id)
+      .select("role assignedAreas")
+      .lean();
+
+    if (!user) {
+      return res.status(401).json({
+        message: "User session invalid hai.",
+      });
+    }
+
+    let areas = [];
+
+    if (user.role === "admin") {
+      areas = await Area.find({}).select("_id name").lean();
+    } else {
+      const assignedAreaIds = Array.isArray(user.assignedAreas)
+        ? user.assignedAreas.map((item) => item?._id || item).filter(Boolean)
+        : [];
+
+      if (assignedAreaIds.length > 0) {
+        areas = await Area.find({
+          _id: { $in: assignedAreaIds },
+        })
+          .select("_id name")
+          .lean();
+      }
+    }
+
+    const areaIds = areas.map((area) => area._id);
+
+    if (areaIds.length === 0) {
+      return res.json({
+        success: true,
+        totalConsumersDue: 0,
+        totalOutstanding: 0,
+        rows: [],
+      });
+    }
+
+    const areaNameMap = new Map(
+      areas.map((area) => [String(area._id), area.name || ""]),
+    );
+
+    // -----------------------------------------
+    // 2. CONSUMERS IN ALLOWED AREAS ONLY
+    // -----------------------------------------
+
+    const consumers = await Consumer.find({
+      areaId: { $in: areaIds },
+    })
+      .select(
+        "consumerId name mobile areaId stbNo vcNo packageName monthlyAmount previousDue advanceAmount",
+      )
+      .sort({ name: 1 })
+      .lean();
+
+    if (consumers.length === 0) {
+      return res.json({
+        success: true,
+        totalConsumersDue: 0,
+        totalOutstanding: 0,
+        rows: [],
+      });
+    }
+
+    // -----------------------------------------
+    // 3. LOAD EXISTING BILLS
+    // -----------------------------------------
+
+    const currentMonth = getCurrentMonth();
+
+    const bills = await MonthlyBill.find({
+      consumerId: {
+        $in: consumers.map((consumer) => consumer._id),
+      },
+      month: { $lte: currentMonth },
+    })
+      .select(
+        "consumerId month billNo amount amountPaid concessionAmount status billDate",
+      )
+      .lean();
+
+    const billsByConsumer = new Map();
+
+    for (const bill of bills) {
+      const id = String(bill.consumerId);
+
+      if (!billsByConsumer.has(id)) {
+        billsByConsumer.set(id, []);
+      }
+
+      billsByConsumer.get(id).push(bill);
+    }
+
+    // -----------------------------------------
+    // 4. CALCULATE OUTSTANDING PER CUSTOMER
+    // -----------------------------------------
+
+    const allRows = consumers.map((consumer) => {
+      const consumerBills = billsByConsumer.get(String(consumer._id)) || [];
+
+      let oldBillsDue = 0;
+      let currentPackageAmount = 0;
+      let currentPackageDue = 0;
+
+      for (const bill of consumerBills) {
+        const amount = Number(bill.amount || 0);
+        const paid = Number(bill.amountPaid || 0);
+        const concession = Number(bill.concessionAmount || 0);
+
+        const balance = Math.max(amount - paid - concession, 0);
+
+        if (bill.month < currentMonth) {
+          // Previous months ke unpaid bills
+          oldBillsDue += balance;
+        } else if (bill.month === currentMonth) {
+          // Current month ka actual existing bill
+          currentPackageAmount += amount;
+          currentPackageDue += balance;
+        }
+      }
+
+      const previousDue = Number(consumer.previousDue || 0);
+      const advanceAmount = Number(consumer.advanceAmount || 0);
+
+      const grossDue = oldBillsDue + previousDue + currentPackageDue;
+
+      // Advance ko total outstanding se adjust karenge.
+      const totalDue = Math.max(grossDue - advanceAmount, 0);
+
+      return {
+        _id: String(consumer._id),
+
+        consumerId: consumer.consumerId || "",
+        name: consumer.name || "",
+        mobile: consumer.mobile || "",
+        areaId: consumer.areaId ? String(consumer.areaId) : "",
+        areaName: areaNameMap.get(String(consumer.areaId)) || "",
+
+        stbNo: consumer.stbNo || "",
+        vcNo: consumer.vcNo || "",
+
+        oldBillsDue,
+        previousDue,
+
+        currentPackageAmount,
+        currentPackageDue,
+
+        advanceAmount,
+        totalDue,
+      };
+    });
+
+    // -----------------------------------------
+    // 5. SHOW ONLY CUSTOMERS WITH OUTSTANDING
+    // -----------------------------------------
+
+    const rows = allRows
+      .filter((row) => row.totalDue > 0)
+      .sort((a, b) => b.totalDue - a.totalDue);
+
+    const totalOutstanding = rows.reduce((sum, row) => sum + row.totalDue, 0);
+
+    return res.json({
+      success: true,
+      currentMonth,
+      totalConsumersDue: rows.length,
+      totalOutstanding,
+      rows,
+    });
+  } catch (error) {
+    console.error("getDueList error:", error);
+
+    return res.status(500).json({
+      message: error.message || "Due List load nahi hui.",
+    });
+  }
+};
 module.exports = {
   createConsumer,
   getUnmatchedAreaGroups,
@@ -2270,4 +2453,5 @@ module.exports = {
   applyConcession,
   setPreviousDue,
   mergeSeptemberCollectionHistory,
+  getDueList,
 };

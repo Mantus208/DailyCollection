@@ -4,6 +4,7 @@ const {
   getUnmatchedAreaGroups,
   assignAreaByAddress,
   searchConsumers,
+  getDueList,
   getConsumerDetail,
   getLivePaytv,
   collectPayment,
@@ -54,7 +55,7 @@ router.get(
 router.get("/:id/paytv-live", protect, getConsumerPaytvLive);
 router.get("/search", protect, searchConsumers);
 router.get("/:id/live", protect, getLivePaytv);
-router.get("/:id/live", protect, getLivePaytv);
+router.get("/due-list", protect, getDueList);
 router.get("/:id", protect, getConsumerDetail);
 router.put("/:id/collect", protect, collectPayment);
 router.put("/:id/advance", protect, recordAdvancePayment);
